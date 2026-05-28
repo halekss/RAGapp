@@ -1,0 +1,60 @@
+# ============================================================
+# Template de configuration client
+# Copier ce dossier, renommer en <slug-client>, et remplir.
+# Aucune modification de code nécessaire pour ajouter un client.
+# ============================================================
+
+client:
+  slug: "example-client"           # Identifiant unique, utilisé comme namespace Qdrant
+  name: "Exemple Client"
+  sector: "technology"             # Secteur : technology | finance | retail | health | ...
+  language: "fr"                   # Langue principale des sources
+
+competitors:
+  - name: "Concurrent A"
+    domains:
+      - "concurrenta.com"
+  - name: "Concurrent B"
+    domains:
+      - "concurrentb.com"
+      - "blog.concurrentb.com"
+
+sources:
+  rss:
+    - name: "Blog Concurrent A"
+      url: "https://concurrenta.com/feed"
+      schedule: "0 */6 * * *"      # Cron : toutes les 6h
+    - name: "TechCrunch filtre"
+      url: "https://techcrunch.com/feed/"
+      schedule: "0 8 * * *"        # Cron : tous les matins à 8h
+      keywords_filter:             # N'ingère que les articles contenant ces mots
+        - "Concurrent A"
+        - "Concurrent B"
+
+  pages:
+    - name: "Newsroom Concurrent A"
+      url: "https://concurrenta.com/newsroom"
+      schedule: "0 9 * * 1-5"      # Du lundi au vendredi à 9h
+      selector: "article"          # Sélecteur CSS pour extraire le contenu utile
+
+  documents:
+    # Sources alimentées manuellement (upload via interface admin)
+    - type: "pdf"
+      description: "Rapports annuels"
+    - type: "docx"
+      description: "Études de marché"
+
+rag:
+  llm_model: "gpt-4o-mini"         # Surcharge du modèle LLM par défaut
+  embedding_model: "text-embedding-3-small"
+  top_k: 6                         # Nombre de chunks retournés par le retriever
+  rerank: true                     # Activer le rerankage des résultats
+
+alerts:
+  enabled: true
+  keywords:                        # Déclenche une alerte si ces mots apparaissent
+    - "acquisition"
+    - "levée de fonds"
+    - "lancement"
+    - "partenariat"
+  digest_schedule: "0 8 * * 1"    # Résumé hebdo tous les lundis à 8h
