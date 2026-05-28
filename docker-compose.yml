@@ -1,0 +1,128 @@
+services:
+
+  # --- Base de données relationnelle -------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: rag_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ragpassword}
+      POSTGRES_DB: ${POSTGRES_DB:-ragdb}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rag}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Base vectorielle ---------------------------------------------------------
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: rag_qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "6333:6333"   # API REST
+      - "6334:6334"   # API gRPC
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Broker de tâches asynchrones ---------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: rag_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- API FastAPI ---------------------------------------------------------------
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: rag_api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - APP_ENV=production
+    volumes:
+      - ./backend/configs:/app/configs:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # --- Worker Celery ------------------------------------------------------------
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: rag_worker
+    restart: unless-stopped
+    command: celery -A app.services.scheduler worker --loglevel=info --concurrency=4
+    env_file: .env
+    environment:
+      - APP_ENV=production
+    volumes:
+      - ./backend/configs:/app/configs:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # --- Scheduler Celery Beat ----------------------------------------------------
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: rag_beat
+    restart: unless-stopped
+    command: celery -A app.services.scheduler beat --loglevel=info
+    env_file: .env
+    environment:
+      - APP_ENV=production
+    volumes:
+      - ./backend/configs:/app/configs:ro
+    depends_on:
+      - worker
+
+  # --- Frontend React -----------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: rag_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  redis_data:

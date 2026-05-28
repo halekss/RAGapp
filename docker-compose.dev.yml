@@ -1,0 +1,73 @@
+# Override pour le développement local : hot-reload, pas de build d'image
+
+services:
+
+  postgres:
+    extends:
+      file: docker-compose.yml
+      service: postgres
+
+  qdrant:
+    extends:
+      file: docker-compose.yml
+      service: qdrant
+
+  redis:
+    extends:
+      file: docker-compose.yml
+      service: redis
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: rag_api_dev
+    env_file: .env
+    environment:
+      - APP_ENV=development
+    volumes:
+      - ./backend:/app          # hot-reload via watchfiles
+      - ./backend/configs:/app/configs:ro
+    ports:
+      - "8000:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: rag_worker_dev
+    env_file: .env
+    environment:
+      - APP_ENV=development
+    volumes:
+      - ./backend:/app
+      - ./backend/configs:/app/configs:ro
+    command: celery -A app.services.scheduler worker --loglevel=debug --concurrency=2
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Flower : UI de monitoring Celery (dev uniquement)
+  flower:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: rag_flower
+    env_file: .env
+    command: celery -A app.services.scheduler flower --port=5555
+    ports:
+      - "5555:5555"
+    depends_on:
+      - worker
