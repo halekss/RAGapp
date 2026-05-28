@@ -14,6 +14,36 @@ Assistant de veille concurrentielle par RAG — multi-tenant, configurable par f
 | Frontend | React 18 + Vite + Tailwind |
 | Infrastructure | Docker Compose |
 
+## Environnement de développement backend
+
+Prérequis : Python 3.11 installé sur la machine.
+
+```bash
+# 1. Se placer dans le dossier backend
+cd backend
+
+# 2. Créer le venv
+py -3.11 -m venv .venv          # Windows
+python3.11 -m venv .venv        # macOS / Linux
+
+# 3. Activer le venv
+source .venv/Scripts/activate   # Windows (Git Bash)
+source .venv/bin/activate       # macOS / Linux
+
+# 4. Mettre pip à jour
+python.exe -m pip install --upgrade pip   # Windows
+pip install --upgrade pip                 # macOS / Linux
+
+# 5. Installer les dépendances
+pip install -e ".[dev]"
+```
+
+Le flag `-e` installe le projet en mode editable : les modifications du code sont prises en compte sans réinstaller. Le `[dev]` inclut les outils de développement (pytest, ruff, mypy).
+
+Une fois installé, sélectionner l'interpréteur du venv dans VS Code via `Ctrl+Shift+P` > `Python: Select Interpreter`, puis choisir `.venv\Scripts\python.exe` dans le dossier `backend/`.
+
+> Le venv sert uniquement pour l'autocomplétion de l'IDE et les tests unitaires. L'application elle-même tourne dans Docker et gère son propre environnement Python isolé.
+
 ## Démarrage rapide
 
 ```bash
