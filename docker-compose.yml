@@ -14,10 +14,11 @@ services:
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rag}"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rag} -d ${POSTGRES_DB:-ragdb}"]
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 30s
 
   # --- Base vectorielle ---------------------------------------------------------
   qdrant:
@@ -27,13 +28,10 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     ports:
-      - "6333:6333"   # API REST
-      - "6334:6334"   # API gRPC
+      - "6333:6333"
+      - "6334:6334"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      disable: true
 
   # --- Broker de tâches asynchrones ---------------------------------------------
   redis:
@@ -47,9 +45,10 @@ services:
       - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 10s
 
   # --- API FastAPI ---------------------------------------------------------------
   api:
@@ -59,17 +58,17 @@ services:
     container_name: rag_api
     restart: unless-stopped
     env_file: .env
-    environment:
-      - APP_ENV=production
     volumes:
       - ./backend/configs:/app/configs:ro
     ports:
       - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
       qdrant:
-        condition: service_healthy
+        condition: service_started
       redis:
         condition: service_healthy
 
@@ -86,11 +85,13 @@ services:
       - APP_ENV=production
     volumes:
       - ./backend/configs:/app/configs:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
       qdrant:
-        condition: service_healthy
+        condition: service_started
       redis:
         condition: service_healthy
 

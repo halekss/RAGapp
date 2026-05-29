@@ -1,21 +1,52 @@
-# Override pour le développement local : hot-reload, pas de build d'image
-
 services:
 
   postgres:
-    extends:
-      file: docker-compose.yml
-      service: postgres
+    image: postgres:16-alpine
+    container_name: rag_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ragpassword}
+      POSTGRES_DB: ${POSTGRES_DB:-ragdb}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rag}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   qdrant:
-    extends:
-      file: docker-compose.yml
-      service: qdrant
+    image: qdrant/qdrant:latest
+    container_name: rag_qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
-    extends:
-      file: docker-compose.yml
-      service: redis
+    image: redis:7-alpine
+    container_name: rag_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   api:
     build:
@@ -26,11 +57,13 @@ services:
     environment:
       - APP_ENV=development
     volumes:
-      - ./backend:/app          # hot-reload via watchfiles
+      - ./backend:/app
       - ./backend/configs:/app/configs:ro
     ports:
       - "8000:8000"
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -51,6 +84,8 @@ services:
       - ./backend:/app
       - ./backend/configs:/app/configs:ro
     command: celery -A app.services.scheduler worker --loglevel=debug --concurrency=2
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -59,7 +94,6 @@ services:
       redis:
         condition: service_healthy
 
-  # Flower : UI de monitoring Celery (dev uniquement)
   flower:
     build:
       context: ./backend
@@ -71,3 +105,8 @@ services:
       - "5555:5555"
     depends_on:
       - worker
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  redis_data:

@@ -8,16 +8,20 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
+from app.core.database import engine
 from app.core.logging import setup_logging
+from app.models.base import Base
 from app.api.routes import chat, clients, ingestion, sources
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     setup_logging()
-    # Ici : initialisation DB, connexion Qdrant, etc. (étapes suivantes)
+    # Création des tables si elles n'existent pas (complétée par Alembic en prod)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     yield
-    # Ici : nettoyage des ressources
+    await engine.dispose()
 
 
 def create_app() -> FastAPI:

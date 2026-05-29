@@ -44,6 +44,26 @@ Une fois installé, sélectionner l'interpréteur du venv dans VS Code via `Ctrl
 
 > Le venv sert uniquement pour l'autocomplétion de l'IDE et les tests unitaires. L'application elle-même tourne dans Docker et gère son propre environnement Python isolé.
 
+## Prérequis : LM Studio
+
+L'application utilise LM Studio pour l'inférence et l'embedding en local, sans aucune clé API payante.
+
+Les deux modèles suivants doivent être installés dans LM Studio :
+
+| Rôle | Modèle |
+|---|---|
+| Génération | `meta-llama-3.1-8b-instruct` |
+| Embedding | `nomic-ai/nomic-embed-text-v1.5` |
+
+Avant de lancer Docker, démarrer le serveur local dans LM Studio (onglet **Developer**) sur le port `1234`. Le **Just-in-Time Model Loading** doit être activé pour que les deux modèles soient chargés à la demande sur le même port.
+
+Pour basculer sur OpenAI plus tard, il suffit de changer deux lignes dans le `.env` :
+
+```env
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+```
+
 ## Démarrage rapide
 
 ```bash
