@@ -6,63 +6,32 @@ Assistant de veille concurrentielle par RAG — multi-tenant, configurable par f
 
 | Couche | Technologie |
 |---|---|
-| API | FastAPI + Uvicorn |
+| API | FastAPI + Uvicorn (Python 3.11) |
 | Tâches async | Celery + Redis |
 | Base vectorielle | Qdrant |
-| Base relationnelle | PostgreSQL |
+| Base relationnelle | PostgreSQL 16 |
 | Pipeline RAG | LlamaIndex |
+| LLM / Embedding | LM Studio (local) ou OpenAI (configurable) |
 | Frontend | React 18 + Vite + Tailwind |
 | Infrastructure | Docker Compose |
 
-## Environnement de développement backend
+---
 
-Prérequis : Python 3.11 installé sur la machine.
+## Prérequis
 
-```bash
-# 1. Se placer dans le dossier backend
-cd backend
-
-# 2. Créer le venv
-py -3.11 -m venv .venv          # Windows
-python3.11 -m venv .venv        # macOS / Linux
-
-# 3. Activer le venv
-source .venv/Scripts/activate   # Windows (Git Bash)
-source .venv/bin/activate       # macOS / Linux
-
-# 4. Mettre pip à jour
-python.exe -m pip install --upgrade pip   # Windows
-pip install --upgrade pip                 # macOS / Linux
-
-# 5. Installer les dépendances
-pip install -e ".[dev]"
-```
-
-Le flag `-e` installe le projet en mode editable : les modifications du code sont prises en compte sans réinstaller. Le `[dev]` inclut les outils de développement (pytest, ruff, mypy).
-
-Une fois installé, sélectionner l'interpréteur du venv dans VS Code via `Ctrl+Shift+P` > `Python: Select Interpreter`, puis choisir `.venv\Scripts\python.exe` dans le dossier `backend/`.
-
-> Le venv sert uniquement pour l'autocomplétion de l'IDE et les tests unitaires. L'application elle-même tourne dans Docker et gère son propre environnement Python isolé.
-
-## Prérequis : LM Studio
-
-L'application utilise LM Studio pour l'inférence et l'embedding en local, sans aucune clé API payante.
-
-Les deux modèles suivants doivent être installés dans LM Studio :
+- Docker Desktop
+- Python 3.11
+- Node.js 20+
+- LM Studio avec les modèles suivants installés et le serveur démarré sur le port `1234` :
 
 | Rôle | Modèle |
 |---|---|
 | Génération | `meta-llama-3.1-8b-instruct` |
 | Embedding | `nomic-ai/nomic-embed-text-v1.5` |
 
-Avant de lancer Docker, démarrer le serveur local dans LM Studio (onglet **Developer**) sur le port `1234`. Le **Just-in-Time Model Loading** doit être activé pour que les deux modèles soient chargés à la demande sur le même port.
+Le **Just-in-Time Model Loading** doit être activé dans LM Studio (onglet Developer) pour que les deux modèles soient disponibles sur le même port.
 
-Pour basculer sur OpenAI plus tard, il suffit de changer deux lignes dans le `.env` :
-
-```env
-LLM_PROVIDER=openai
-OPENAI_API_KEY=sk-...
-```
+---
 
 ## Démarrage rapide
 
@@ -70,42 +39,141 @@ OPENAI_API_KEY=sk-...
 # 1. Copier et remplir les variables d'environnement
 cp .env.example .env
 
-# 2. Lancer l'environnement de développement
-docker compose -f docker-compose.dev.yml up --build
+# 2. Générer les dépendances npm (première fois uniquement)
+cd frontend && npm install && cd ..
 
-# 3. L'API est disponible sur http://localhost:8000
-#    La doc Swagger est sur http://localhost:8000/docs
-#    Le frontend est sur http://localhost:3000
-#    Flower (monitoring Celery) est sur http://localhost:5555
+# 3. Lancer le stack complet
+docker compose up --build   # premier lancement
+docker compose up           # relances suivantes
 ```
+
+### URLs disponibles
+
+| URL | Service |
+|---|---|
+| http://localhost:8000/health | Healthcheck API |
+| http://localhost:8000/docs | Swagger UI (APP_ENV=development) |
+| http://localhost:3000 | Frontend React |
+| http://localhost:6333/dashboard | Interface Qdrant |
+
+---
+
+## Commandes courantes
+
+```bash
+# Arrêter le stack (volumes conservés)
+docker compose down
+
+# Arrêter et supprimer les volumes (reset complet de la BDD)
+docker compose down -v
+
+# Suivre les logs d'un service
+docker compose logs -f api
+docker compose logs -f worker
+
+# Rebuilder uniquement après modification de fichiers Python ou Docker
+docker compose up --build
+```
+
+---
+
+## Environnement de développement backend (IDE + tests)
+
+Le venv sert uniquement pour l'autocomplétion VS Code et les tests unitaires. L'application tourne dans Docker.
+
+```bash
+cd backend
+
+# Créer le venv
+py -3.11 -m venv .venv          # Windows
+python3.11 -m venv .venv        # macOS / Linux
+
+# Activer le venv
+source .venv/Scripts/activate   # Windows (Git Bash)
+source .venv/bin/activate       # macOS / Linux
+
+# Installer les dépendances
+python.exe -m pip install --upgrade pip   # Windows
+pip install -e ".[dev]"
+```
+
+Dans VS Code : `Ctrl+Shift+P` > `Python: Select Interpreter` > choisir `.venv\Scripts\python.exe`.
+
+---
 
 ## Ajouter un client
 
 ```bash
 cp -r backend/configs/_template backend/configs/mon-client
 # Éditer backend/configs/mon-client/config.yaml
-# Redémarrer le service api et worker
+docker compose up   # pas de rebuild nécessaire, les configs sont montées en volume
 ```
 
-Aucune modification de code nécessaire.
+Aucune modification de code nécessaire. Chaque client dispose de son namespace Qdrant isolé, sa clé API et sa configuration de sources.
+
+---
+
+## Basculer sur OpenAI
+
+Modifier deux lignes dans le `.env` :
+
+```env
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+```
+
+Puis `docker compose up --build`.
+
+---
 
 ## Structure
 
 ```
 competitive-rag/
+├── .env                        # Variables d'environnement (non commité)
+├── .env.example                # Template
+├── docker-compose.yml
+├── docker-compose.dev.yml      # Surcharge dev (hot-reload + Flower)
+├── PROJECT_CONTEXT.md          # Contexte complet du projet pour IA
+│
 ├── backend/
 │   ├── app/
-│   │   ├── api/routes/     # Endpoints FastAPI
-│   │   ├── core/           # Config, logging, sécurité
-│   │   ├── ingestion/      # Collecteurs de sources
-│   │   ├── rag/            # Pipeline retrieval + génération
-│   │   ├── models/         # Modèles SQLAlchemy
-│   │   └── services/       # Qdrant, Celery
-│   └── configs/            # Un dossier YAML par client
+│   │   ├── main.py             # Point d'entrée FastAPI
+│   │   ├── api/routes/         # Endpoints (chat, sources, ingestion, clients)
+│   │   ├── core/               # Config, database, logging, sécurité
+│   │   ├── ingestion/          # Collecteurs RSS, scraping, PDF + pipeline
+│   │   ├── rag/                # Retriever, generator, chain
+│   │   ├── models/             # SQLAlchemy : Client, Source, QueryLog
+│   │   └── services/           # LLM factory, Celery, Qdrant
+│   ├── configs/                # Un dossier YAML par client
+│   ├── alembic/                # Migrations base de données
+│   └── pyproject.toml
+│
 └── frontend/
     └── src/
-        ├── components/
-        ├── pages/
-        ├── api/
-        └── hooks/
+        ├── pages/              # Chat, Dashboard, Admin
+        ├── components/         # chat/, dashboard/, admin/
+        ├── api/                # Clients HTTP typés
+        └── hooks/              # React Query hooks
 ```
+
+---
+
+## État du projet
+
+### Terminé
+- Stack Docker complet opérationnel (tous services healthy)
+- Configuration multi-tenant par fichier YAML
+- Authentification par API Key
+- Modèles SQLAlchemy (Client, Source, QueryLog)
+- Factory LLM/Embedding switchable LM Studio / OpenAI
+- Celery + beat schedule configurés
+- Frontend React initialisé avec routing
+
+### À venir
+- Pipeline d'ingestion (RSS, scraping, PDF, chunking, embedding)
+- Pipeline RAG (retriever, generator)
+- Routes API (chat, sources, ingestion, clients)
+- Interface React (composants chat, dashboard, admin)
+- Tests unitaires
+- Migration Alembic initiale
