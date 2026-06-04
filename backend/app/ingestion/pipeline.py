@@ -117,6 +117,78 @@ def run_ingestion_for_client(client_id: str) -> dict:
     return summary
 
 
+def run_ingestion_for_source(client_slug: str, source_id: int) -> dict:
+    """
+    Ingestion d'une seule source identifiée par son ID en base.
+    Utilisée pour les déclenchements manuels via l'API.
+
+    Retourne le même format de résumé que run_ingestion_for_client.
+    """
+    logger.info(f"[PIPELINE] Démarrage ingestion source #{source_id} pour '{client_slug}'")
+    summary = {
+        "client_id": client_slug,
+        "collected": 0,
+        "skipped_duplicates": 0,
+        "chunks_produced": 0,
+        "chunks_stored": 0,
+        "errors": [],
+    }
+
+    config = _load_client_config(client_slug)
+    if config is None:
+        msg = f"Configuration introuvable pour le client '{client_slug}'"
+        logger.error(f"[PIPELINE] {msg}")
+        summary["errors"].append(msg)
+        return summary
+
+    chunker_config: dict = config.get("chunker", {})
+    sources_config: list[dict] = config.get("sources", [])
+
+    # Chercher la source par id dans le YAML, ou par position en fallback
+    source_conf = None
+    for s in sources_config:
+        if s.get("id") == source_id:
+            source_conf = s
+            break
+
+    if source_conf is None and 0 < source_id <= len(sources_config):
+        source_conf = sources_config[source_id - 1]
+
+    if source_conf is None:
+        msg = f"Source #{source_id} introuvable dans la config de '{client_slug}'"
+        logger.error(f"[PIPELINE] {msg}")
+        summary["errors"].append(msg)
+        return summary
+
+    source_type = source_conf.get("type", "").lower()
+    documents = _collect_source(source_conf, source_type, client_slug, summary)
+    summary["collected"] = len(documents)
+
+    if not documents:
+        return summary
+
+    settings = get_settings()
+    qdrant = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+    new_documents = _deduplicate(documents, qdrant, client_slug)
+    summary["skipped_duplicates"] = len(documents) - len(new_documents)
+
+    if not new_documents:
+        logger.info(f"[PIPELINE] Aucun nouveau document pour source #{source_id}")
+        return summary
+
+    chunks = chunk_documents(new_documents, chunker_config)
+    summary["chunks_produced"] = len(chunks)
+
+    if not chunks:
+        return summary
+
+    stored = embed_and_store(chunks, client_slug)
+    summary["chunks_stored"] = stored
+
+    logger.info(f"[PIPELINE] Source #{source_id} : {stored} chunks stockés")
+    return summary
+
+
 # ---------------------------------------------------------------------------
 # Fonctions internes
 # ---------------------------------------------------------------------------
@@ -131,7 +203,6 @@ def _load_client_config(client_id: str) -> dict | None:
     config_path = settings.configs_dir / client_id / "config.yaml"
 
     if not config_path.exists():
-        # Fallback pour les tests locaux hors Docker
         local_path = Path("backend/configs") / client_id / "config.yaml"
         if local_path.exists():
             config_path = local_path
@@ -157,8 +228,6 @@ def _collect_source(
             return rss.collect(source_conf, client_id)
 
         elif source_type == SourceType.SCRAPING.value:
-            # Le collecteur scraping est async (Playwright).
-            # On l'exécute dans une boucle asyncio dédiée depuis ce contexte synchrone.
             import asyncio
             return asyncio.run(scraper.collect(source_conf, client_id))
 
@@ -185,18 +254,10 @@ def _deduplicate(
 ) -> list[CollectedDocument]:
     """
     Filtre les documents dont l'URL est déjà présente dans Qdrant.
-
-    On interroge Qdrant avec un filtre sur le payload `source_url`.
-    Si au moins un point existe pour cette URL dans la collection du client,
-    le document est considéré comme déjà ingéré et ignoré.
-
-    Si la collection n'existe pas encore (premier lancement), tous les
-    documents passent — la collection sera créée par l'embedder.
     """
     existing_collections = {c.name for c in qdrant.get_collections().collections}
 
     if client_id not in existing_collections:
-        # Première ingestion : pas de déduplication possible
         return documents
 
     from qdrant_client.models import FieldCondition, Filter, MatchValue

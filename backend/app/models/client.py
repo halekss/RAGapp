@@ -26,6 +26,10 @@ class Client(Base):
     api_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
+    # Colonnes ajoutées pour les routes API
+    sector: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="client")
+
     # Namespace Qdrant : égal au slug par convention
     @property
     def qdrant_namespace(self) -> str:
