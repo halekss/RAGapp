@@ -9,9 +9,11 @@ async def retrieve(query: str, top_k: int = 5) -> list[dict]:
     """Récupère les chunks similaires à la requête depuis Qdrant."""
     from app.embedder import embed_texts
     
+    # Vectorise la requête
     query_embedding = await embed_texts([query])
     query_vector = query_embedding[0]
     
+    # Recherche dans Qdrant
     client = AsyncQdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
     results = await client.search(
         collection_name=COLLECTION,
@@ -21,6 +23,7 @@ async def retrieve(query: str, top_k: int = 5) -> list[dict]:
     )
     await client.close()
     
+    # Retourne les résultats
     return [
         {
             "text": result.payload["text"],

@@ -4,7 +4,7 @@ Toutes les valeurs sont lues depuis les variables d'environnement ou le fichier 
 """
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -55,23 +55,23 @@ class Settings(BaseSettings):
     default_embedding_model: str = Field(default="text-embedding-3-small")
 
     # --- Propriétés calculées : modèles actifs selon le fournisseur ---
-    @computed_field  # type: ignore[misc]
+    @computed_field
     @property
     def active_llm_model(self) -> str:
         if self.llm_provider == "lmstudio":
             return self.lmstudio_llm_model
         return self.default_llm_model
 
-    @computed_field  # type: ignore[misc]
+    @computed_field
     @property
     def active_embedding_model(self) -> str:
         if self.llm_provider == "lmstudio":
             return self.lmstudio_embedding_model
         return self.default_embedding_model
 
-    @computed_field  # type: ignore[misc]
+    @computed_field
     @property
-    def active_base_url(self) -> str | None:
+    def active_base_url(self) -> Optional[str]:
         """Retourne la base URL uniquement pour LM Studio (None pour OpenAI natif)."""
         if self.llm_provider == "lmstudio":
             return self.lmstudio_base_url

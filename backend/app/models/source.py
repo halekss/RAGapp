@@ -4,6 +4,7 @@ Peut être un flux RSS, une page web, un document uploadé, etc.
 """
 import uuid
 from enum import Enum
+from typing import Optional
 
 from sqlalchemy import Boolean, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import UUID
@@ -42,16 +43,15 @@ class Source(Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     source_type: Mapped[SourceType] = mapped_column(String(16), nullable=False)
-    url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    schedule: Mapped[str | None] = mapped_column(String(64), nullable=True)  # cron
+    url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    schedule: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     status: Mapped[SourceStatus] = mapped_column(
         String(16), default=SourceStatus.ACTIVE, nullable=False
     )
-    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    # Relation
-    client: Mapped["Client"] = relationship("Client", back_populates="sources")  # type: ignore[name-defined]
+    client: Mapped["Client"] = relationship("Client", back_populates="sources")
 
     def __repr__(self) -> str:
         return f"<Source name={self.name!r} type={self.source_type} status={self.status}>"

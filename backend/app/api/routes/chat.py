@@ -1,4 +1,5 @@
-"""Route chat — stub en attente d'implémentation."""
 from fastapi import APIRouter
 
-router = APIRouter()
+router = APIRouter(prefix="/chat", tags=["chat"])
+
+# TODO: Personne B — RAG endpoints
