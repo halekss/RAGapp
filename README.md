@@ -2,6 +2,8 @@
 
 Assistant de veille concurrentielle par RAG — multi-tenant, configurable par fichier YAML, zéro donnée fictive codée en dur.
 
+---
+
 ## Stack
 
 | Couche | Technologie |
@@ -19,9 +21,8 @@ Assistant de veille concurrentielle par RAG — multi-tenant, configurable par f
 
 ## Prérequis
 
-- Docker Desktop
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 - Python 3.11
-- Node.js 20+
 - LM Studio avec les modèles suivants installés et le serveur démarré sur le port `1234` :
 
 | Rôle | Modèle |
@@ -33,71 +34,61 @@ Le **Just-in-Time Model Loading** doit être activé dans LM Studio (onglet Deve
 
 ---
 
-## Démarrage rapide
+## Démarrage rapide (Docker)
+
+C'est la méthode recommandée. Docker gère l'intégralité des dépendances : aucun `npm install` ni `pip install` à faire manuellement.
 
 ```bash
-# 1. Copier et remplir les variables d'environnement
-cp .env.example .env
+# 1. Cloner le dépôt
+git clone <url-du-repo>
+cd competitive-rag
 
-# 2. Générer les dépendances npm (première fois uniquement)
-cd frontend && npm install && cd ..
+# 2. Vérifier que le .env est bien présent à la racine
+#    (il est commité, aucune action nécessaire)
 
-# 3. Lancer le stack complet
-docker compose up --build   # premier lancement
-docker compose up           # relances suivantes
+# 3. Lancer l'environnement de développement
+docker compose -f docker-compose.dev.yml up --build
 ```
 
-### URLs disponibles
+Une fois les conteneurs démarrés :
 
-| URL | Service |
+| Service | URL |
 |---|---|
-| http://localhost:8000/health | Healthcheck API |
-| http://localhost:8000/docs | Swagger UI (APP_ENV=development) |
-| http://localhost:3000 | Frontend React |
-| http://localhost:6333/dashboard | Interface Qdrant |
+| API | http://localhost:8000 |
+| Documentation Swagger | http://localhost:8000/docs |
+| Frontend | http://localhost:3000 |
+| Flower (monitoring Celery) | http://localhost:5555 |
 
 ---
 
-## Commandes courantes
+## Environnement de développement backend (hors Docker)
+
+Cette section est utile uniquement si tu souhaites travailler sur le code backend avec l'autocomplétion et la vérification de types dans ton IDE.
+
+Prérequis : Python 3.11 installé sur la machine.
 
 ```bash
-# Arrêter le stack (volumes conservés)
-docker compose down
-
-# Arrêter et supprimer les volumes (reset complet de la BDD)
-docker compose down -v
-
-# Suivre les logs d'un service
-docker compose logs -f api
-docker compose logs -f worker
-
-# Rebuilder uniquement après modification de fichiers Python ou Docker
-docker compose up --build
-```
-
----
-
-## Environnement de développement backend (IDE + tests)
-
-Le venv sert uniquement pour l'autocomplétion VS Code et les tests unitaires. L'application tourne dans Docker.
-
-```bash
+# 1. Se placer dans le dossier backend
 cd backend
 
-# Créer le venv
+# 2. Créer le venv
 py -3.11 -m venv .venv          # Windows
 python3.11 -m venv .venv        # macOS / Linux
 
-# Activer le venv
+# 3. Activer le venv
 source .venv/Scripts/activate   # Windows (Git Bash)
 source .venv/bin/activate       # macOS / Linux
 
-# Installer les dépendances
-python.exe -m pip install --upgrade pip   # Windows
+# 4. Mettre pip à jour
+pip install --upgrade pip
+
+# 5. Installer les dépendances
 pip install -e ".[dev]"
 ```
 
-Dans VS Code : `Ctrl+Shift+P` > `Python: Select Interpreter` > choisir `.venv\Scripts\python.exe`.
+Le flag `-e` installe le projet en mode editable : les modifications du code sont prises en compte sans réinstaller. Le `[dev]` inclut les outils de développement (pytest, ruff, mypy).
+
+Dans VS Code, sélectionner ensuite l'interpréteur qui pointe vers `backend/.venv` via `Ctrl+Shift+P` → **Python: Select Interpreter**.
 
 ---
 
@@ -130,10 +121,9 @@ Puis `docker compose up --build`.
 
 ```
 competitive-rag/
-├── .env                        # Variables d'environnement (non commité)
-├── .env.example                # Template
-├── docker-compose.yml
-├── docker-compose.dev.yml      # Surcharge dev (hot-reload + Flower)
+├── .env                        # Variables d'environnement (commité)
+├── docker-compose.yml          # Production
+├── docker-compose.dev.yml      # Développement (hot-reload + Flower)
 ├── PROJECT_CONTEXT.md          # Contexte complet du projet pour IA
 │
 ├── backend/
@@ -159,21 +149,9 @@ competitive-rag/
 
 ---
 
-## État du projet
+## Notes importantes
 
-### Terminé
-- Stack Docker complet opérationnel (tous services healthy)
-- Configuration multi-tenant par fichier YAML
-- Authentification par API Key
-- Modèles SQLAlchemy (Client, Source, QueryLog)
-- Factory LLM/Embedding switchable LM Studio / OpenAI
-- Celery + beat schedule configurés
-- Frontend React initialisé avec routing
-
-### À venir
-- Pipeline d'ingestion (RSS, scraping, PDF, chunking, embedding)
-- Pipeline RAG (retriever, generator)
-- Routes API (chat, sources, ingestion, clients)
-- Interface React (composants chat, dashboard, admin)
-- Tests unitaires
-- Migration Alembic initiale
+- `docker compose up --build` est nécessaire uniquement quand on modifie des fichiers Python, le frontend, ou la configuration Docker. Pour les simples relances, `docker compose up` suffit.
+- Modifier un YAML de configuration client ne nécessite pas de rebuild.
+- Le modèle d'embedding doit rester cohérent sur toute la durée de vie du projet. Changer de modèle implique de ré-indexer tous les documents dans Qdrant.
+- `SECRET_KEY` et `API_KEY_SALT` sont à définir une fois en production et ne plus jamais changer.
