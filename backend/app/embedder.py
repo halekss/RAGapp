@@ -1,11 +1,10 @@
 import httpx
 from app.core.config import get_settings
 
-settings = get_settings()
-
 
 async def embed_texts(texts: list[str]) -> list[list[float]]:
     """Vectorise une liste de textes via LM Studio."""
+    settings = get_settings()
     async with httpx.AsyncClient() as client:
         response = await client.post(
             f"{settings.active_base_url}/embeddings",

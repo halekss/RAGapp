@@ -52,7 +52,7 @@ async def ask_question(
                 str(src["source_id"]) for src in result["sources"]
             ),
             retrieval_ms=elapsed_ms,
-            llm_model=settings.llm_model,
+            llm_model=settings.active_llm_model,
         )
         session.add(log)
         await session.commit()
@@ -70,7 +70,7 @@ async def ask_question(
             client_id=request.client_id,
             question=request.query,
             answer=None,
-            llm_model=settings.llm_model,
+            llm_model=settings.active_llm_model,
         )
         session.add(log)
         await session.commit()

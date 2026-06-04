@@ -24,9 +24,9 @@ Answer:"""
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            f"{settings.llm_base_url}/chat/completions",
+            f"{settings.active_base_url}/chat/completions",
             json={
-                "model": settings.llm_model,
+                "model": settings.active_llm_model,
                 "messages": [
                     {
                         "role": "user",
