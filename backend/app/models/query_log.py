@@ -1,10 +1,10 @@
 """
-Modèle QueryLog : trace chaque question posée par un analyste.
-Utilisé pour l'audit, les statistiques d'usage et l'amélioration continue.
+Modèle QueryLog : log des requêtes et réponses RAG pour chaque client.
 """
 import uuid
+from typing import Optional
 
-from sqlalchemy import Float, ForeignKey, Integer, Text
+from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -25,21 +25,11 @@ class QueryLog(Base):
         nullable=False,
         index=True,
     )
-    question: Mapped[str] = mapped_column(Text, nullable=False)
-    answer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    query: Mapped[str] = mapped_column(Text, nullable=False)
+    answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    sources: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # Chunks Qdrant utilisés pour générer la réponse (IDs séparés par virgule)
-    source_chunk_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    # Métriques de performance
-    retrieval_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    generation_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    llm_model: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    # Relation
-    client: Mapped["Client"] = relationship("Client", back_populates="query_logs")  # type: ignore[name-defined]
+    client: Mapped["Client"] = relationship("Client", back_populates="query_logs")
 
     def __repr__(self) -> str:
-        preview = self.question[:50] + "..." if len(self.question) > 50 else self.question
-        return f"<QueryLog client={self.client_id} question={preview!r}>"
+        return f"<QueryLog client_id={self.client_id!r} query={self.query[:50]!r}>"
