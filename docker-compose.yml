@@ -12,7 +12,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rag} -d ${POSTGRES_DB:-ragdb}"]
       interval: 5s
@@ -79,6 +79,7 @@ services:
       dockerfile: Dockerfile
     container_name: rag_worker
     restart: unless-stopped
+    entrypoint: []
     command: celery -A app.services.scheduler worker --loglevel=info --concurrency=4
     env_file: .env
     environment:
@@ -102,6 +103,7 @@ services:
       dockerfile: Dockerfile
     container_name: rag_beat
     restart: unless-stopped
+    entrypoint: []
     command: celery -A app.services.scheduler beat --loglevel=info
     env_file: .env
     environment:
