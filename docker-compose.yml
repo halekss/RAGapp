@@ -1,48 +1,44 @@
 services:
 
-  # --- Base de données relationnelle -------------------------------------------
+  # ── PostgreSQL ───────────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
     container_name: rag_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-rag}
+      POSTGRES_USER:     ${POSTGRES_USER:-rag}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ragpassword}
-      POSTGRES_DB: ${POSTGRES_DB:-ragdb}
+      POSTGRES_DB:       ${POSTGRES_DB:-ragdb}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5433:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rag} -d ${POSTGRES_DB:-ragdb}"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rag}"]
+      interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 5
       start_period: 30s
 
-  # --- Base vectorielle ---------------------------------------------------------
+  # ── Qdrant ───────────────────────────────────────────────────────────────────
   qdrant:
     image: qdrant/qdrant:latest
     container_name: rag_qdrant
     restart: unless-stopped
     volumes:
       - qdrant_data:/qdrant/storage
-    ports:
-      - "6333:6333"
-      - "6334:6334"
     healthcheck:
-      disable: true
+      test: ["CMD-SHELL", "wget -qO- http://localhost:6333/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
-  # --- Broker de tâches asynchrones ---------------------------------------------
+  # ── Redis ────────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     container_name: rag_redis
     restart: unless-stopped
-    command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
-    ports:
-      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -50,7 +46,7 @@ services:
       retries: 10
       start_period: 10s
 
-  # --- API FastAPI ---------------------------------------------------------------
+  # ── API FastAPI ───────────────────────────────────────────────────────────────
   api:
     build:
       context: ./backend
@@ -58,32 +54,40 @@ services:
     container_name: rag_api
     restart: unless-stopped
     env_file: .env
+    environment:
+      APP_ENV: production
     volumes:
       - ./backend/configs:/app/configs:ro
-    ports:
-      - "8000:8000"
+    # Pas de port exposé : nginx proxifie vers ce service en interne
+    expose:
+      - "8000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
       qdrant:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
-  # --- Worker Celery ------------------------------------------------------------
+  # ── Worker Celery ─────────────────────────────────────────────────────────────
   worker:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: rag_worker
     restart: unless-stopped
-    entrypoint: []
     command: celery -A app.services.scheduler worker --loglevel=info --concurrency=4
     env_file: .env
     environment:
-      - APP_ENV=production
+      APP_ENV: production
     volumes:
       - ./backend/configs:/app/configs:ro
     extra_hosts:
@@ -92,28 +96,27 @@ services:
       postgres:
         condition: service_healthy
       qdrant:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_healthy
 
-  # --- Scheduler Celery Beat ----------------------------------------------------
+  # ── Celery Beat (scheduler) ───────────────────────────────────────────────────
   beat:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: rag_beat
     restart: unless-stopped
-    entrypoint: []
     command: celery -A app.services.scheduler beat --loglevel=info
     env_file: .env
     environment:
-      - APP_ENV=production
+      APP_ENV: production
     volumes:
       - ./backend/configs:/app/configs:ro
     depends_on:
       - worker
 
-  # --- Frontend React -----------------------------------------------------------
+  # ── Frontend React (nginx) ────────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
@@ -123,7 +126,8 @@ services:
     ports:
       - "3000:80"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
 volumes:
   postgres_data:
