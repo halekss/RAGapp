@@ -9,10 +9,12 @@ Retriever : recherche les chunks les plus pertinents dans Qdrant.
 """
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 from dataclasses import dataclass
 
-from qdrant_client import AsyncQdrantClient
+from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 
 from app.core.config import settings
@@ -38,13 +40,13 @@ class RetrievedChunk:
 
 
 # ---------------------------------------------------------------------------
-# Client Qdrant (singleton léger, pas de pool nécessaire avec async)
+# Client Qdrant (synchrone, wrappé en async via run_in_executor)
 # ---------------------------------------------------------------------------
 
-def _get_qdrant_client() -> AsyncQdrantClient:
-    return AsyncQdrantClient(
-        host=settings.QDRANT_HOST,
-        port=settings.QDRANT_PORT,
+def _get_qdrant_client() -> QdrantClient:
+    return QdrantClient(
+        host=settings.qdrant_host,
+        port=settings.qdrant_port,
     )
 
 
@@ -61,16 +63,6 @@ async def retrieve(
 ) -> list[RetrievedChunk]:
     """
     Recherche les chunks les plus pertinents pour une question donnée.
-
-    Args:
-        question:            La question posée par l'utilisateur.
-        client_slug:         Identifiant du client (= nom de la collection Qdrant).
-        top_k:               Nombre maximum de chunks à retourner.
-        score_threshold:     Score de similarité minimum (cosinus, entre 0 et 1).
-        source_type_filter:  Si renseigné, ne cherche que dans ce type de source.
-
-    Returns:
-        Liste de RetrievedChunk triée par score décroissant.
     """
     embedder = get_embedding_model()
     qdrant = _get_qdrant_client()
@@ -94,16 +86,20 @@ async def retrieve(
             ]
         )
 
-    # 3. Recherche dans la collection du client
+    # 3. Recherche dans la collection du client (sync dans executor)
     collection_name = client_slug
     try:
-        results = await qdrant.search(
-            collection_name=collection_name,
-            query_vector=question_vector,
-            limit=top_k * 2,          # On récupère plus pour filtrer ensuite
-            score_threshold=score_threshold,
-            query_filter=qdrant_filter,
-            with_payload=True,
+        loop = asyncio.get_running_loop()
+        results = await loop.run_in_executor(
+            None,
+            lambda: qdrant.query_points(
+                collection_name=collection_name,
+                query=question_vector,
+                limit=top_k * 2,
+                score_threshold=score_threshold,
+                query_filter=qdrant_filter,
+                with_payload=True,
+            ).points
         )
     except Exception as exc:
         logger.error(
@@ -125,15 +121,14 @@ async def retrieve(
         payload = hit.payload or {}
         url = payload.get("url", "")
         chunk = RetrievedChunk(
-            text=payload.get("text", ""),
-            url=url,
-            title=payload.get("title", url),
+            text=payload.get("content", ""),
+            url=payload.get("source_url", ""),
+            title=payload.get("source_title", url),
             source_type=payload.get("source_type", "unknown"),
             score=round(hit.score, 4),
             chunk_index=payload.get("chunk_index", 0),
             ingested_at=payload.get("ingested_at", ""),
         )
-        # Garde le meilleur score si plusieurs chunks de la même URL
         if url not in seen_urls or chunk.score > seen_urls[url].score:
             seen_urls[url] = chunk
 
@@ -153,16 +148,10 @@ async def retrieve(
 
 async def _embed_question(embedder, question: str) -> list[float]:
     """
-    Embed la question. Supporte les embedders sync et async
-    selon ce que retourne la factory.
+    Embed la question. Supporte les embedders sync et async.
     """
-    import asyncio
-    import inspect
-
-    result = embedder.embed_query(question)
+    result = embedder.get_text_embedding(question)
     if inspect.isawaitable(result):
         return await result
-    # Si l'embedder est synchrone, on l'exécute dans un thread pool
-    # pour ne pas bloquer la boucle asyncio
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, embedder.embed_query, question)
+    return await loop.run_in_executor(None, embedder.get_text_embedding, question)

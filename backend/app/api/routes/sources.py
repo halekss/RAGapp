@@ -14,7 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import CurrentClient, AdminClient
 from app.core.config import get_settings
 from app.core.database import get_db as get_session
-from app.models.source import Source
+from app.models.source import Source, SourceType, SourceStatus
+import uuid
 
 router = APIRouter()
 settings = get_settings()
@@ -29,12 +30,11 @@ SOURCE_TYPES = {"rss", "scraper", "pdf"}
 
 
 class SourceCreate(BaseModel):
-    name: str = Field(..., min_length=2, max_length=150, description="Nom lisible de la source")
-    source_type: str = Field(..., description="Type : rss | scraper | pdf")
-    url: str = Field(..., description="URL du flux RSS, de la page à scraper ou du PDF")
-    keywords: list[str] = Field(default_factory=list, description="Mots-clés de filtrage (optionnel)")
-    schedule_hours: int = Field(24, ge=1, le=168, description="Fréquence d'ingestion en heures (1–168)")
-    is_active: bool = Field(True, description="Source active ou suspendue")
+    name: str
+    source_type: SourceType
+    url: str | None = None
+    schedule: str | None = Field(None, description="Expression cron (ex: '0 */6 * * *')")
+    is_active: bool = True
 
     @field_validator("source_type")
     @classmethod
@@ -45,23 +45,20 @@ class SourceCreate(BaseModel):
 
 
 class SourceUpdate(BaseModel):
-    name: str | None = Field(None, min_length=2, max_length=150)
+    name: str | None = None
     url: str | None = None
-    keywords: list[str] | None = None
-    schedule_hours: int | None = Field(None, ge=1, le=168)
+    schedule: str | None = None
     is_active: bool | None = None
 
 
 class SourceOut(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
     source_type: str
-    url: str
-    keywords: list[str]
-    schedule_hours: int
+    url: str | None = None
+    schedule: str | None = None
     is_active: bool
-    client_id: int
-
+    client_id: uuid.UUID
     model_config = {"from_attributes": True}
 
 
@@ -93,8 +90,7 @@ def _sync_sources_to_yaml(slug: str, sources: list[Source]) -> None:
             "name": s.name,
             "type": s.source_type,
             "url": s.url,
-            "keywords": s.keywords or [],
-            "schedule_hours": s.schedule_hours,
+            "schedule": s.schedule,
             "active": s.is_active,
         }
         for s in sources
@@ -132,7 +128,7 @@ async def list_sources(
     summary="Détails d'une source",
 )
 async def get_source(
-    source_id: int,
+    source_id: uuid.UUID,
     current_client: CurrentClient,
     session: AsyncSession = Depends(get_session),
 ) -> Source:
@@ -177,8 +173,7 @@ async def create_source(
         name=payload.name,
         source_type=payload.source_type,
         url=payload.url,
-        keywords=payload.keywords,
-        schedule_hours=payload.schedule_hours,
+        schedule=payload.schedule,
         is_active=payload.is_active,
     )
     session.add(source)
@@ -200,7 +195,7 @@ async def create_source(
     summary="Modifier une source",
 )
 async def update_source(
-    source_id: int,
+    source_id: uuid.UUID,
     payload: SourceUpdate,
     current_client: CurrentClient,
     session: AsyncSession = Depends(get_session),
@@ -234,7 +229,7 @@ async def update_source(
     summary="Supprimer une source",
 )
 async def delete_source(
-    source_id: int,
+    source_id: uuid.UUID,
     current_client: CurrentClient,
     session: AsyncSession = Depends(get_session),
 ) -> None:
@@ -262,7 +257,7 @@ async def delete_source(
     summary="Activer / désactiver une source",
 )
 async def toggle_source(
-    source_id: int,
+    source_id: uuid.UUID,
     current_client: CurrentClient,
     session: AsyncSession = Depends(get_session),
 ) -> Source:

@@ -1,0 +1,32 @@
+client:
+  slug: demo
+  name: "Demo Client"
+  sector: "tech"
+  language: "fr"
+
+competitors:
+  - name: "Concurrent A"
+    domains: ["concurrent-a.com"]
+  - name: "Concurrent B"
+    domains: ["concurrent-b.com"]
+
+sources:
+  rss:
+    - name: "TechCrunch"
+      url: "https://techcrunch.com/feed/"
+      schedule: "0 */6 * * *"
+  pages: []
+  documents:
+    - type: "pdf"
+
+rag:
+  llm_model: "meta-llama-3.1-8b-instruct"
+  embedding_model: "nomic-ai/nomic-embed-text-v1.5"
+  top_k: 5
+  score_threshold: 0.45
+
+alerts:
+  keywords: ["lancement", "acquisition", "levée de fonds", "partenariat"]
+  digest_schedule: "0 8 * * 1"
+
+api_key_hash: "e42011d23d767afd251f186be6824174f527c116566b13532e3b359e93413736"

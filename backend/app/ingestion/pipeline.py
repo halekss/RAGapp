@@ -62,7 +62,17 @@ def run_ingestion_for_client(client_id: str) -> dict:
         summary["errors"].append(msg)
         return summary
 
-    sources_config: list[dict] = config.get("sources", [])
+    sources_raw = config.get("sources", {})
+    sources_config: list[dict] = []
+    if isinstance(sources_raw, list):
+        sources_config = sources_raw
+    elif isinstance(sources_raw, dict):
+        for source_type, items in sources_raw.items():
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, dict):
+                        item.setdefault("type", source_type)
+                        sources_config.append(item)
     chunker_config: dict = config.get("chunker", {})
 
     if not sources_config:
