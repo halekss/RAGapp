@@ -7,19 +7,20 @@ export const FIXTURE_SOURCES = [
   {
     id: "src-1",
     name: "TechCrunch RSS",
-    type: "rss",
+    source_type: "rss",
     url: "https://techcrunch.com/feed/",
-    status: "active",
-    chunks_count: 1240,
-    last_ingested: "2025-06-05T06:00:00Z",
+    is_active: true,
+    schedule: null,
+    client_id: "client-demo",
   },
   {
     id: "src-2",
     name: "Rapports 2024",
-    type: "pdf",
+    source_type: "pdf",
     url: "https://example.com/report.pdf",
-    status: "inactive",
-    chunks_count: 320,
+    is_active: false,
+    schedule: null,
+    client_id: "client-demo",
   },
 ];
 
@@ -54,33 +55,66 @@ export const FIXTURE_DASHBOARD = {
   ],
 };
 
+export const FIXTURE_CHAT_HISTORY = [
+  {
+    id: "log-1",
+    question: "Quelles sont les dernières actus tech ?",
+    answer: "Voici les dernières nouvelles…",
+    created_at: "2025-06-05T10:00:00Z",
+  },
+];
+
 // ─── Handlers par défaut ──────────────────────────────────────────────────────
 
 export const defaultHandlers = [
-  // Sources CRUD
-  http.get("/api/sources", () => HttpResponse.json(FIXTURE_SOURCES)),
+  // ── Sources CRUD ────────────────────────────────────────────────────────────
 
-  http.post("/api/sources", async ({ request }) => {
+  http.get("/api/v1/sources/", () => HttpResponse.json(FIXTURE_SOURCES)),
+
+  http.post("/api/v1/sources/", async ({ request }) => {
     const body = await request.json() as Record<string, unknown>;
-    return HttpResponse.json({ id: "src-new", status: "active", ...body }, { status: 201 });
+    return HttpResponse.json(
+      {
+        id: "src-new",
+        is_active: true,
+        schedule: null,
+        client_id: "client-demo",
+        ...body,
+      },
+      { status: 201 }
+    );
   }),
 
-  http.post("/api/sources/:id/toggle", ({ params }) =>
-    HttpResponse.json({ id: params.id, status: "inactive" })
+  http.patch("/api/v1/sources/:id", async ({ params, request }) => {
+    const body = await request.json() as Record<string, unknown>;
+    const source = FIXTURE_SOURCES.find((s) => s.id === params.id);
+    return HttpResponse.json({ ...source, ...body });
+  }),
+
+  http.post("/api/v1/sources/:id/toggle", ({ params }) => {
+    const source = FIXTURE_SOURCES.find((s) => s.id === params.id);
+    return HttpResponse.json({ ...source, is_active: false });
+  }),
+
+  http.delete("/api/v1/sources/:id", () => new HttpResponse(null, { status: 204 })),
+
+  // ── Ingestion ───────────────────────────────────────────────────────────────
+
+  http.post("/api/v1/ingestion/trigger", () =>
+    HttpResponse.json(
+      { task_id: "task-abc123", message: "Ingestion lancée.", client_slug: "demo" },
+      { status: 202 }
+    )
   ),
 
-  http.delete("/api/sources/:id", () => new HttpResponse(null, { status: 204 })),
-
-  // Ingestion
-  http.post("/api/ingestion/trigger", () =>
-    HttpResponse.json({ task_id: "task-abc123" }, { status: 202 })
+  http.post("/api/v1/ingestion/trigger/:sourceId", ({ params }) =>
+    HttpResponse.json(
+      { task_id: `task-${params.sourceId}`, message: "Ingestion lancée.", source_id: params.sourceId },
+      { status: 202 }
+    )
   ),
 
-  http.post("/api/ingestion/trigger/:sourceId", ({ params }) =>
-    HttpResponse.json({ task_id: `task-${params.sourceId}` }, { status: 202 })
-  ),
-
-  http.get("/api/ingestion/status/:taskId", ({ params }) =>
+  http.get("/api/v1/ingestion/status/:taskId", ({ params }) =>
     HttpResponse.json({
       task_id: params.taskId,
       status: "SUCCESS",
@@ -88,21 +122,51 @@ export const defaultHandlers = [
     })
   ),
 
-  // Upload PDF
-  http.post("/api/sources/upload-pdf", () =>
-    HttpResponse.json({ task_id: "task-pdf-upload" }, { status: 202 })
-  ),
+  // ── Chat ────────────────────────────────────────────────────────────────────
 
-  // Chat
-  http.post("/api/chat", () =>
+  http.post("/api/v1/chat/", () =>
     HttpResponse.json({
       answer: "Voici ma réponse.",
-      sources: [{ title: "Source A", url: "https://a.com", score: 0.92 }],
+      sources: [{ title: "Source A", url: "https://a.com", source_type: "rss", score: 0.92, excerpt: "…" }],
+      query_log_id: "log-new",
+      processing_time_ms: 1200,
     })
   ),
 
-  // Dashboard
-  http.get("/api/dashboard", () => HttpResponse.json(FIXTURE_DASHBOARD)),
+  http.post("/api/v1/chat/stream", () =>
+    new HttpResponse(
+      'data: {"type":"token","content":"Voici"}\n\ndata: {"type":"token","content":" ma réponse."}\n\ndata: {"type":"done","query_log_id":"log-new","processing_time_ms":1200,"sources":[]}\n\n',
+      {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }
+    )
+  ),
+
+  http.get("/api/v1/chat/history", () => HttpResponse.json(FIXTURE_CHAT_HISTORY)),
+
+  http.delete("/api/v1/chat/history", () => new HttpResponse(null, { status: 204 })),
+
+  // ── Dashboard (fallback pour les tests) ────────────────────────────────────
+
+  http.get("/api/dashboard", ({ request }) => {
+    const url = new URL(request.url);
+    const period = url.searchParams.get("period") ?? "7d";
+    return HttpResponse.json({ ...FIXTURE_DASHBOARD, period });
+  }),
+
+  // ── Clients ─────────────────────────────────────────────────────────────────
+
+  http.get("/api/v1/clients/me", () =>
+    HttpResponse.json({
+      id: "client-demo",
+      slug: "demo",
+      name: "Demo",
+      role: "admin",
+      is_active: true,
+      created_at: "2025-01-01T00:00:00Z",
+    })
+  ),
 ];
 
 export const server = setupServer(...defaultHandlers);

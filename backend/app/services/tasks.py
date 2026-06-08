@@ -45,10 +45,8 @@ def check_scheduled_sources() -> None:
 def ingest_client(self, client_id: str) -> dict:
     """
     Ingestion complète de toutes les sources actives d'un client.
-    Retourne un résumé {chunks_stored, skipped_duplicates, errors, sources_processed}.
     """
     logger.info(f"[TASKS] Début ingestion complète pour '{client_id}'")
-
     try:
         summary = run_ingestion_for_client(client_id)
         logger.info(
@@ -58,7 +56,6 @@ def ingest_client(self, client_id: str) -> dict:
             f"{len(summary['errors'])} erreur(s)"
         )
         return summary
-
     except Exception as exc:
         logger.error(f"[TASKS] Erreur inattendue pour '{client_id}' : {exc}", exc_info=True)
         raise self.retry(exc=exc)
@@ -70,25 +67,23 @@ def ingest_client(self, client_id: str) -> dict:
     max_retries=3,
     default_retry_delay=60,
 )
-def ingest_source(self, client_slug: str, source_id: int) -> dict:
+def ingest_source(self, client_slug: str, source_url: str) -> dict:
     """
-    Ingestion d'une seule source identifiée par son ID.
-    Utilisée pour les déclenchements manuels via l'API.
+    Ingestion d'une seule source identifiée par son URL.
+    L'URL est la clé commune entre PostgreSQL et le YAML de config.
     """
-    logger.info(f"[TASKS] Début ingestion source #{source_id} pour '{client_slug}'")
-
+    logger.info(f"[TASKS] Début ingestion source '{source_url}' pour '{client_slug}'")
     try:
-        summary = run_ingestion_for_source(client_slug, source_id)
+        summary = run_ingestion_for_source(client_slug, source_url)
         logger.info(
-            f"[TASKS] Ingestion source #{source_id} terminée : "
+            f"[TASKS] Ingestion source '{source_url}' terminée : "
             f"{summary['chunks_stored']} chunks stockés, "
             f"{summary['skipped_duplicates']} doublons ignorés"
         )
         return summary
-
     except Exception as exc:
         logger.error(
-            f"[TASKS] Erreur source #{source_id} pour '{client_slug}' : {exc}",
+            f"[TASKS] Erreur source '{source_url}' pour '{client_slug}' : {exc}",
             exc_info=True,
         )
         raise self.retry(exc=exc)
