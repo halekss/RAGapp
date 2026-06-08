@@ -1,21 +1,27 @@
-# --- Étape 1 : build ---
+# ── Étape 1 : build React ────────────────────────────────────────────────────
 FROM node:20-alpine AS builder
 
 WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm ci
+
+# Copier les manifestes en premier pour profiter du cache Docker
+COPY package.json package-lock.json ./
+RUN npm ci --production=false
 
 COPY . .
 RUN npm run build
 
-# --- Étape 2 : serve avec nginx ---
-FROM nginx:alpine
+# ── Étape 2 : serve avec nginx ────────────────────────────────────────────────
+FROM nginx:1.27-alpine
 
+# Supprimer la config par défaut
+RUN rm /etc/nginx/conf.d/default.conf
+
+# Copier notre config nginx (proxy /api, gzip, cache, SPA fallback)
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# Copier le build React
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Config nginx : redirige tout vers index.html pour le routing React
-RUN printf 'server {\n  listen 80;\n  root /usr/share/nginx/html;\n  index index.html;\n  location / {\n    try_files $uri $uri/ /index.html;\n  }\n}\n' \
-    > /etc/nginx/conf.d/default.conf
-
 EXPOSE 80
+
 CMD ["nginx", "-g", "daemon off;"]
