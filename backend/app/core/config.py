@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     # --- Qdrant ---
     qdrant_host: str = Field(default="localhost")
     qdrant_port: int = Field(default=6333)
+    embedding_dimension: int = Field(default=768)
+    # 768 = dimension de nomic-embed-text-v1.5 (LM Studio)
+    # Passer à 1536 si tu bascules sur text-embedding-3-small (OpenAI)
+    # Ce chiffre DOIT correspondre au modèle d'embedding actif.
+    # Changer de modèle sans recréer les collections Qdrant provoquera une erreur.
 
     # --- Redis / Celery ---
     redis_url: str = Field(default="redis://localhost:6379/0")

@@ -41,7 +41,7 @@ C'est la méthode recommandée. Docker gère l'intégralité des dépendances : 
 ```bash
 # 1. Cloner le dépôt
 git clone <url-du-repo>
-cd competitive-rag
+cd RAGapp
 
 # 2. Vérifier que le .env est bien présent à la racine
 #    (il est commité, aucune action nécessaire)
