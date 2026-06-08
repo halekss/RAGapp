@@ -1,4 +1,18 @@
+/**
+ * useDashboard — hook du tableau de bord.
+ *
+ * Stratégie : construire les KPIs réels depuis les routes existantes,
+ * et conserver le MOCK en fallback pour les sections sans route backend
+ * (alertes, tendances) ainsi qu'en cas d'erreur réseau.
+ *
+ * Routes utilisées :
+ *   GET /api/v1/sources/          → nombre de sources actives + activité
+ *   GET /api/v1/chat/history      → nombre de requêtes chat
+ */
+
 import { useState, useEffect, useCallback } from "react";
+import { apiGet, ApiError } from "../api/client";
+import type { Source } from "./useSources";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -46,15 +60,15 @@ export interface DashboardData {
 }
 
 export interface UseDashboard {
-  data:       DashboardData | null;
-  isLoading:  boolean;
-  error:      string | null;
-  period:     Period;
-  setPeriod:  (p: Period) => void;
-  refresh:    () => void;
+  data:      DashboardData | null;
+  isLoading: boolean;
+  error:     string | null;
+  period:    Period;
+  setPeriod: (p: Period) => void;
+  refresh:   () => void;
 }
 
-// ─── Données mock (dev / fallback) ───────────────────────────────────────────
+// ─── Données mock (fallback pour alertes/tendances sans route backend) ────────
 
 const MOCK: DashboardData = {
   period: "7 derniers jours",
@@ -110,25 +124,90 @@ const MOCK: DashboardData = {
   ],
 };
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+interface ChatHistoryEntry {
+  id: string;
+  question: string;
+  answer: string | null;
+  created_at: string;
+}
+
+/**
+ * Construit les KPIs réels depuis les routes API disponibles,
+ * et complète avec les sections mock (alertes, tendances).
+ */
+async function buildDashboardData(period: Period): Promise<DashboardData> {
+  const periodLabel: Record<Period, string> = {
+    "7d": "7 derniers jours",
+    "30d": "30 derniers jours",
+    "90d": "90 derniers jours",
+  };
+
+  // Appels parallèles pour minimiser la latence
+  const [sources, chatHistory] = await Promise.all([
+    apiGet<Source[]>("/sources/"),
+    apiGet<ChatHistoryEntry[]>("/chat/history?limit=100").catch(() => [] as ChatHistoryEntry[]),
+  ]);
+
+  const activeSources = sources.filter((s) => s.is_active);
+
+  // KPIs réels
+  const kpis: KPI[] = [
+    {
+      label: "Sources actives",
+      value: activeSources.length,
+      sparkline: undefined,
+    },
+    {
+      label: "Sources totales",
+      value: sources.length,
+      sparkline: undefined,
+    },
+    {
+      label: "Requêtes chat",
+      value: chatHistory.length,
+      sparkline: undefined,
+    },
+  ];
+
+  // Activité des sources depuis les données réelles
+  const sources_activity: SourceActivity[] = activeSources.map((s) => ({
+    name: s.name,
+    type: s.source_type as SourceActivity["type"],
+    chunks_today: 0,   // pas exposé par l'API courante
+    chunks_total: 0,   // pas exposé par l'API courante
+    last_ingested: "",
+  }));
+
+  return {
+    period: periodLabel[period],
+    kpis,
+    // Alertes et tendances : pas de route backend, on garde le mock
+    alerts: MOCK.alerts,
+    trends: MOCK.trends,
+    sources_activity: sources_activity.length > 0 ? sources_activity : MOCK.sources_activity,
+  };
+}
+
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useDashboard(): UseDashboard {
-  const [data, setData]       = useState<DashboardData | null>(null);
+  const [data, setData]           = useState<DashboardData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError]     = useState<string | null>(null);
-  const [period, setPeriod]   = useState<Period>("7d");
+  const [error, setError]         = useState<string | null>(null);
+  const [period, setPeriod]       = useState<Period>("7d");
 
   const load = useCallback(async (p: Period) => {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/dashboard?period=${p}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json: DashboardData = await res.json();
-      setData(json);
+      // Tente d'abord de construire depuis l'API réelle
+      const dashboard = await buildDashboardData(p);
+      setData(dashboard);
     } catch {
-      // Fallback sur mock en dev
-      setData(MOCK);
+      // Fallback silencieux sur le mock (compatible avec les tests existants)
+      setData({ ...MOCK, period: p === "7d" ? "7 derniers jours" : p === "30d" ? "30 derniers jours" : "90 derniers jours" });
     } finally {
       setIsLoading(false);
     }

@@ -4,8 +4,6 @@ import { http, HttpResponse } from "msw";
 import { useSources } from "../hooks/useSources";
 import { server } from "./mswServer";
 
-// Garantir la restauration des vrais timers après chaque test,
-// même si le test échoue ou lève une exception.
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -27,7 +25,7 @@ describe("useSources", () => {
 
   it("reste silencieux si l'API échoue au chargement (état vide)", async () => {
     server.use(
-      http.get("/api/sources", () => HttpResponse.json({}, { status: 500 }))
+      http.get("/api/v1/sources/", () => HttpResponse.json({}, { status: 500 }))
     );
 
     const { result } = renderHook(() => useSources());
@@ -45,7 +43,7 @@ describe("useSources", () => {
     await act(async () => {
       await result.current.addSource({
         name: "Nouvelle source",
-        type: "rss",
+        source_type: "rss",
         url: "https://new.com/feed",
       });
     });
@@ -57,17 +55,20 @@ describe("useSources", () => {
 
   it("addSource lève une erreur si l'API répond en erreur", async () => {
     server.use(
-      http.post("/api/sources", () => HttpResponse.json({}, { status: 422 }))
+      http.post("/api/v1/sources/", () => HttpResponse.json({}, { status: 422 }))
     );
 
-    // Chaque test crée son propre renderHook isolé
     const { result } = renderHook(() => useSources());
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     let threw = false;
     try {
       await act(async () => {
-        await result.current.addSource({ name: "X", type: "rss", url: "https://x.com" });
+        await result.current.addSource({
+          name: "X",
+          source_type: "rss",
+          url: "https://x.com",
+        });
       });
     } catch {
       threw = true;
@@ -77,7 +78,7 @@ describe("useSources", () => {
 
   // ── toggleSource ───────────────────────────────────────────────────────────
 
-  it("toggleSource inverse le statut de la source", async () => {
+  it("toggleSource inverse le statut is_active de la source", async () => {
     const { result } = renderHook(() => useSources());
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
@@ -87,7 +88,7 @@ describe("useSources", () => {
 
     const toggled = result.current.sources.find((s) => s.id === "src-1");
     expect(toggled).toBeDefined();
-    expect(toggled!.status).toBe("inactive");
+    expect(toggled!.is_active).toBe(false);
   });
 
   // ── deleteSource ───────────────────────────────────────────────────────────
@@ -104,14 +105,14 @@ describe("useSources", () => {
     expect(result.current.sources).toHaveLength(1);
   });
 
-  // ── ingestSource ───────────────────────────────────────────────────────────
+  // ── ingestAll / ingestOne ──────────────────────────────────────────────────
 
-  it("ingestSource (toutes) crée une tâche PENDING", async () => {
+  it("ingestAll crée une tâche PENDING", async () => {
     const { result } = renderHook(() => useSources());
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     await act(async () => {
-      await result.current.ingestSource();
+      await result.current.ingestAll();
     });
 
     expect(result.current.tasks).toHaveLength(1);
@@ -119,32 +120,15 @@ describe("useSources", () => {
     expect(result.current.tasks[0].status).toBe("PENDING");
   });
 
-  it("ingestSource (source spécifique) crée une tâche avec le bon task_id", async () => {
+  it("ingestOne crée une tâche avec le bon task_id", async () => {
     const { result } = renderHook(() => useSources());
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     await act(async () => {
-      await result.current.ingestSource("src-1");
+      await result.current.ingestOne("src-1");
     });
 
     expect(result.current.tasks[0].task_id).toBe("task-src-1");
-  });
-
-  // ── uploadPDFs ─────────────────────────────────────────────────────────────
-
-  it("uploadPDFs crée une tâche PENDING", async () => {
-    const { result } = renderHook(() => useSources());
-    await waitFor(() => expect(result.current.isLoading).toBe(false));
-
-    const file = new File(["pdf content"], "doc.pdf", { type: "application/pdf" });
-
-    await act(async () => {
-      await result.current.uploadPDFs([file]);
-    });
-
-    expect(result.current.tasks).toHaveLength(1);
-    expect(result.current.tasks[0].task_id).toBe("task-pdf-upload");
-    expect(result.current.tasks[0].status).toBe("PENDING");
   });
 
   // ── Polling ────────────────────────────────────────────────────────────────
@@ -156,7 +140,7 @@ describe("useSources", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     await act(async () => {
-      await result.current.ingestSource();
+      await result.current.ingestAll();
     });
 
     expect(result.current.tasks[0].status).toBe("PENDING");
@@ -180,7 +164,7 @@ describe("useSources", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     await act(async () => {
-      await result.current.ingestSource();
+      await result.current.ingestAll();
     });
 
     await act(async () => { vi.advanceTimersByTime(1500); });
@@ -201,7 +185,7 @@ describe("useSources", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     await act(async () => {
-      await result.current.ingestSource();
+      await result.current.ingestAll();
     });
 
     expect(result.current.tasks).toHaveLength(1);

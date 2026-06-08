@@ -1,19 +1,48 @@
+/**
+ * useSources — hook de gestion des sources.
+ *
+ * Routes utilisées :
+ *   GET    /api/v1/sources/              → lister
+ *   POST   /api/v1/sources/              → créer
+ *   PATCH  /api/v1/sources/{id}          → modifier
+ *   DELETE /api/v1/sources/{id}          → supprimer
+ *   POST   /api/v1/sources/{id}/toggle   → activer/désactiver
+ *   POST   /api/v1/ingestion/trigger     → ingestion complète
+ *   POST   /api/v1/ingestion/trigger/{id}→ ingestion d'une source
+ *   GET    /api/v1/ingestion/status/{id} → statut tâche Celery
+ */
+
 import { useState, useCallback, useEffect, useRef } from "react";
+import { apiGet, apiPost, apiPatch, apiDelete, ApiError } from "../api/client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type SourceType   = "rss" | "scraper" | "pdf";
-export type SourceStatus = "active" | "inactive" | "error";
+export type SourceType = "rss" | "scraper" | "pdf";
 
+// Correspond exactement au SourceOut du backend
 export interface Source {
   id: string;
   name: string;
-  type: SourceType;
-  url: string;
-  status: SourceStatus;
-  last_ingested?: string;
-  chunks_count?: number;
+  source_type: SourceType;
+  url: string | null;
+  schedule: string | null;
+  is_active: boolean;
+  client_id: string;
+}
+
+export interface SourceCreatePayload {
+  name: string;
+  source_type: SourceType;
+  url?: string;
   schedule?: string;
+  is_active?: boolean;
+}
+
+export interface SourceUpdatePayload {
+  name?: string;
+  url?: string;
+  schedule?: string;
+  is_active?: boolean;
 }
 
 export type TaskStatus = "PENDING" | "STARTED" | "SUCCESS" | "FAILURE";
@@ -21,6 +50,7 @@ export type TaskStatus = "PENDING" | "STARTED" | "SUCCESS" | "FAILURE";
 export interface IngestionTask {
   task_id: string;
   status: TaskStatus;
+  source_id?: string;     // présent si ingestion d'une seule source
   result?: {
     chunks_stored: number;
     skipped_duplicates: number;
@@ -30,44 +60,82 @@ export interface IngestionTask {
 }
 
 export interface UseSources {
-  // Données
   sources:      Source[];
   tasks:        IngestionTask[];
   isLoading:    boolean;
-  // CRUD
-  addSource:    (data: Omit<Source, "id" | "status">) => Promise<void>;
+  error:        string | null;
+  addSource:    (data: SourceCreatePayload) => Promise<void>;
+  updateSource: (id: string, data: SourceUpdatePayload) => Promise<void>;
   toggleSource: (id: string) => Promise<void>;
   deleteSource: (id: string) => Promise<void>;
-  // Ingestion
-  ingestSource: (sourceId?: string) => Promise<void>;
-  uploadPDFs:   (files: File[], name?: string) => Promise<void>;
-  // Tâches
+  ingestAll:    () => Promise<void>;
+  ingestOne:    (sourceId: string) => Promise<void>;
   dismissTask:  (taskId: string) => void;
+  reload:       () => Promise<void>;
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useSources(): UseSources {
-  const [sources, setSources]   = useState<Source[]>([]);
-  const [tasks, setTasks]       = useState<IngestionTask[]>([]);
+  const [sources, setSources]     = useState<Source[]>([]);
+  const [tasks, setTasks]         = useState<IngestionTask[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError]         = useState<string | null>(null);
 
-  // Polling des tâches actives
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Chargement initial
-  useEffect(() => {
-    loadSources();
+  // ── Chargement ─────────────────────────────────────────────────────────────
+
+  const reload = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await apiGet<Source[]>("/sources/");
+      setSources(data);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.detail : (err as Error).message);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
-  // Démarre/arrête le polling selon les tâches en cours
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  // ── Polling tâches actives ─────────────────────────────────────────────────
+
   useEffect(() => {
     const hasActive = tasks.some(
       (t) => t.status === "PENDING" || t.status === "STARTED"
     );
 
     if (hasActive && !pollRef.current) {
-      pollRef.current = setInterval(pollTasks, 1500);
+      pollRef.current = setInterval(async () => {
+        setTasks((prev) => {
+          const active = prev.filter(
+            (t) => t.status === "PENDING" || t.status === "STARTED"
+          );
+          if (!active.length) return prev;
+
+          Promise.all(
+            active.map((t) =>
+              apiGet<IngestionTask>(`/ingestion/status/${t.task_id}`).catch(
+                () => t
+              )
+            )
+          ).then((updated) => {
+            setTasks((current) =>
+              current.map((t) => {
+                const fresh = updated.find((u) => u.task_id === t.task_id);
+                return fresh ?? t;
+              })
+            );
+          });
+
+          return prev;
+        });
+      }, 1500);
     } else if (!hasActive && pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
@@ -79,119 +147,51 @@ export function useSources(): UseSources {
         pollRef.current = null;
       }
     };
-  }, [tasks]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── Chargement ─────────────────────────────────────────────────────────────
-
-  async function loadSources() {
-    setIsLoading(true);
-    try {
-      const res = await fetch("/api/sources");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data: Source[] = await res.json();
-      setSources(data);
-    } catch {
-      // Silencieux : la page affiche l'état vide
-    } finally {
-      setIsLoading(false);
-    }
-  }
+  }, [tasks]);
 
   // ── CRUD ───────────────────────────────────────────────────────────────────
 
-  const addSource = useCallback(async (data: Omit<Source, "id" | "status">) => {
-    const res = await fetch("/api/sources", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const created: Source = await res.json();
+  const addSource = useCallback(async (data: SourceCreatePayload) => {
+    const created = await apiPost<Source>("/sources/", data);
     setSources((prev) => [created, ...prev]);
   }, []);
 
+  const updateSource = useCallback(
+    async (id: string, data: SourceUpdatePayload) => {
+      const updated = await apiPatch<Source>(`/sources/${id}`, data);
+      setSources((prev) => prev.map((s) => (s.id === id ? updated : s)));
+    },
+    []
+  );
+
   const toggleSource = useCallback(async (id: string) => {
-    const res = await fetch(`/api/sources/${id}/toggle`, { method: "POST" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    setSources((prev) =>
-      prev.map((s) =>
-        s.id === id
-          ? { ...s, status: s.status === "active" ? "inactive" : "active" }
-          : s
-      )
-    );
+    const updated = await apiPost<Source>(`/sources/${id}/toggle`);
+    setSources((prev) => prev.map((s) => (s.id === id ? updated : s)));
   }, []);
 
   const deleteSource = useCallback(async (id: string) => {
-    const res = await fetch(`/api/sources/${id}`, { method: "DELETE" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await apiDelete(`/sources/${id}`);
     setSources((prev) => prev.filter((s) => s.id !== id));
   }, []);
 
   // ── Ingestion ──────────────────────────────────────────────────────────────
 
-  const ingestSource = useCallback(async (sourceId?: string) => {
-    const url = sourceId
-      ? `/api/ingestion/trigger/${sourceId}`
-      : "/api/ingestion/trigger";
-    const res = await fetch(url, { method: "POST" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    if (data.task_id) {
-      setTasks((prev) => [
-        { task_id: data.task_id, status: "PENDING" },
-        ...prev,
-      ]);
-    }
+  const ingestAll = useCallback(async () => {
+    const data = await apiPost<{ task_id: string; message: string }>(
+      "/ingestion/trigger"
+    );
+    setTasks((prev) => [{ task_id: data.task_id, status: "PENDING" }, ...prev]);
   }, []);
 
-  const uploadPDFs = useCallback(async (files: File[], name?: string) => {
-    const form = new FormData();
-    files.forEach((f) => form.append("files", f));
-    if (name) form.append("name", name);
-
-    const res = await fetch("/api/sources/upload-pdf", {
-      method: "POST",
-      body: form,
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    if (data.task_id) {
-      setTasks((prev) => [
-        { task_id: data.task_id, status: "PENDING" },
-        ...prev,
-      ]);
-    }
+  const ingestOne = useCallback(async (sourceId: string) => {
+    const data = await apiPost<{ task_id: string; message: string }>(
+      `/ingestion/trigger/${sourceId}`
+    );
+    setTasks((prev) => [
+      { task_id: data.task_id, status: "PENDING", source_id: sourceId },
+      ...prev,
+    ]);
   }, []);
-
-  // ── Polling tâches ─────────────────────────────────────────────────────────
-
-  async function pollTasks() {
-    setTasks((prev) => {
-      const active = prev.filter(
-        (t) => t.status === "PENDING" || t.status === "STARTED"
-      );
-      if (!active.length) return prev;
-
-      // Lance les requêtes en parallèle, met à jour l'état une fois toutes reçues
-      Promise.all(
-        active.map((t) =>
-          fetch(`/api/ingestion/status/${t.task_id}`)
-            .then((r) => r.json() as Promise<IngestionTask>)
-            .catch(() => t) // En cas d'erreur réseau, on conserve l'état actuel
-        )
-      ).then((updated) => {
-        setTasks((current) =>
-          current.map((t) => {
-            const fresh = updated.find((u) => u.task_id === t.task_id);
-            return fresh ?? t;
-          })
-        );
-      });
-
-      return prev;
-    });
-  }
 
   const dismissTask = useCallback((taskId: string) => {
     setTasks((prev) => prev.filter((t) => t.task_id !== taskId));
@@ -201,11 +201,14 @@ export function useSources(): UseSources {
     sources,
     tasks,
     isLoading,
+    error,
     addSource,
+    updateSource,
     toggleSource,
     deleteSource,
-    ingestSource,
-    uploadPDFs,
+    ingestAll,
+    ingestOne,
     dismissTask,
+    reload,
   };
 }

@@ -1,12 +1,19 @@
-import { useState, useRef } from "react";
+/**
+ * Admin.tsx — gestion des sources de veille.
+ *
+ * Classes CSS : BEM custom depuis global.css (admin-*)
+ * Pas de classes Tailwind utilitaires.
+ */
+
+import { useState } from "react";
 import { useSources } from "../hooks/useSources";
 import type { Source, SourceType } from "../hooks/useSources";
 
-// ─── Formulaire d'ajout ───────────────────────────────────────────────────────
+// ─── Constantes ───────────────────────────────────────────────────────────────
 
 const EMPTY_FORM = {
   name: "",
-  type: "rss" as SourceType,
+  source_type: "rss" as SourceType,
   url: "",
   schedule: "",
 };
@@ -18,18 +25,19 @@ export default function Admin() {
     sources,
     tasks,
     isLoading,
+    error,
     addSource,
     toggleSource,
     deleteSource,
-    ingestSource,
-    uploadPDFs,
+    ingestAll,
+    ingestOne,
     dismissTask,
+    reload,
   } = useSources();
 
-  const [form, setForm] = useState(EMPTY_FORM);
+  const [form, setForm]           = useState(EMPTY_FORM);
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Ajout d'une source ───────────────────────────────────────────────────
 
@@ -43,9 +51,10 @@ export default function Admin() {
     try {
       await addSource({
         name: form.name.trim(),
-        type: form.type,
+        source_type: form.source_type,
         url: form.url.trim(),
-        ...(form.schedule ? { schedule: form.schedule } : {}),
+        schedule: form.schedule.trim() || undefined,
+        is_active: true,
       });
       setForm(EMPTY_FORM);
     } catch (err) {
@@ -55,20 +64,29 @@ export default function Admin() {
     }
   };
 
-  // ── Upload PDF ───────────────────────────────────────────────────────────
+  const [taskError, setTaskError] = useState<string | null>(null);
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
-    if (!files.length) return;
-    await uploadPDFs(files);
-    if (fileInputRef.current) fileInputRef.current.value = "";
+  const handleIngestOne = async (id: string) => {
+    setTaskError(null);
+    try {
+      await ingestOne(id);
+    } catch (err) {
+      setTaskError((err as Error).message ?? "Erreur lors du déclenchement.");
+    }
   };
 
-  // ── Ingestion manuelle ───────────────────────────────────────────────────
+  const handleIngestAll = async () => {
+    setTaskError(null);
+    try {
+      await ingestAll();
+    } catch (err) {
+      setTaskError((err as Error).message ?? "Erreur lors du déclenchement.");
+    }
+  };
 
-  const handleIngestAll = () => ingestSource();
-
-  // ────────────────────────────────────────────────────────────────────────
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") handleAddSource();
+  };
 
   return (
     <div className="admin-page">
@@ -79,27 +97,26 @@ export default function Admin() {
         <div className="admin-header__actions">
           <button
             className="admin-btn admin-btn--secondary"
-            onClick={() => fileInputRef.current?.click()}
+            onClick={reload}
+            title="Rafraîchir"
           >
-            ↑ Importer PDF
+            ↺ Rafraîchir
           </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="application/pdf"
-            multiple
-            style={{ display: "none" }}
-            onChange={handleFileChange}
-          />
           <button
             className="admin-btn admin-btn--primary"
             onClick={handleIngestAll}
-            disabled={sources.length === 0}
+            disabled={sources.filter((s) => s.is_active).length === 0}
+            title="Lancer l'ingestion de toutes les sources actives"
           >
             ▷ Ingérer tout
           </button>
         </div>
       </header>
+
+      {/* ── Erreur globale ───────────────────────────────────────────────── */}
+      {(error || taskError) && (
+        <p className="admin-error">{error ?? taskError}</p>
+      )}
 
       {/* ── Tâches en cours ─────────────────────────────────────────────── */}
       {tasks.length > 0 && (
@@ -112,18 +129,18 @@ export default function Admin() {
                 className={`admin-task admin-task--${task.status.toLowerCase()}`}
               >
                 <div className="admin-task__meta">
-                  <span className="admin-task__id">Tâche {task.task_id.slice(0, 8)}</span>
+                  <span className="admin-task__id">
+                    Tâche {task.task_id.slice(0, 8)}
+                  </span>
                   <span className="admin-task__status">{task.status}</span>
                 </div>
 
-                {/* Barre de progression indéterminée */}
                 {(task.status === "PENDING" || task.status === "STARTED") && (
                   <div className="admin-task__bar">
                     <div className="admin-task__bar-fill admin-task__bar-fill--indeterminate" />
                   </div>
                 )}
 
-                {/* Résultats */}
                 {task.status === "SUCCESS" && task.result && (
                   <p className="admin-task__result">
                     {task.result.chunks_stored} chunks stockés
@@ -140,6 +157,7 @@ export default function Admin() {
                   <button
                     className="admin-task__dismiss"
                     onClick={() => dismissTask(task.task_id)}
+                    aria-label="Fermer"
                   >
                     ✕
                   </button>
@@ -160,12 +178,13 @@ export default function Admin() {
               placeholder="Nom de la source"
               value={form.name}
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              onKeyDown={handleKeyDown}
             />
             <select
               className="admin-select"
-              value={form.type}
+              value={form.source_type}
               onChange={(e) =>
-                setForm((f) => ({ ...f, type: e.target.value as SourceType }))
+                setForm((f) => ({ ...f, source_type: e.target.value as SourceType }))
               }
             >
               <option value="rss">RSS</option>
@@ -179,7 +198,18 @@ export default function Admin() {
               placeholder="URL"
               value={form.url}
               onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
+              onKeyDown={handleKeyDown}
             />
+            <input
+              className="admin-input admin-input--schedule"
+              placeholder="Cron (ex : 0 */6 * * *)"
+              value={form.schedule}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, schedule: e.target.value }))
+              }
+            />
+          </div>
+          <div className="admin-form__row admin-form__row--actions">
             <button
               className="admin-btn admin-btn--primary"
               onClick={handleAddSource}
@@ -204,36 +234,34 @@ export default function Admin() {
         ) : sources.length === 0 ? (
           <p className="admin-empty">Aucune source configurée.</p>
         ) : (
-          <div className="admin-sources">
+        <div className="admin-sources-list">
             {sources.map((src: Source) => (
               <div
                 key={src.id}
-                className={`admin-source admin-source--${src.status}`}
+                className="admin-source-row"
               >
-                <div className="admin-source__info">
-                  <span className={`admin-source__type admin-source__type--${src.type}`}>
-                    {src.type.toUpperCase()}
-                  </span>
-                  <span className="admin-source__name">{src.name}</span>
-                  <span className="admin-source__url">{src.url}</span>
-                  {src.chunks_count !== undefined && (
-                    <span className="admin-source__chunks">{src.chunks_count} chunks</span>
-                  )}
-                </div>
-                <div className="admin-source__actions">
+                <span className="admin-source-row__type">
+                  {src.source_type}
+                </span>
+                <span className="admin-source-row__name">{src.name}</span>
+                {src.url && (
+                  <span className="admin-source-row__url">{src.url}</span>
+                )}
+                <div className="admin-source-row__actions">
                   <button
                     className="admin-btn admin-btn--ghost"
-                    onClick={() => ingestSource(src.id)}
+                    onClick={() => handleIngestOne(src.id)}
                     title="Lancer l'ingestion"
+                    disabled={!src.is_active}
                   >
                     ▷
                   </button>
                   <button
-                    className={`admin-btn admin-btn--ghost${src.status !== "active" ? " admin-btn--muted" : ""}`}
+                    className={`admin-btn admin-btn--ghost${!src.is_active ? " admin-btn--muted" : ""}`}
                     onClick={() => toggleSource(src.id)}
-                    title={src.status === "active" ? "Désactiver" : "Activer"}
+                    title={src.is_active ? "Désactiver" : "Activer"}
                   >
-                    {src.status === "active" ? "● Actif" : "○ Inactif"}
+                    {src.is_active ? "● Actif" : "○ Inactif"}
                   </button>
                   <button
                     className="admin-btn admin-btn--danger"

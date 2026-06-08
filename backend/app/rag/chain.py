@@ -16,7 +16,7 @@ import time
 from typing import AsyncGenerator
 
 from app.rag.retriever import retrieve, RetrievedChunk
-from app.rag.generator import generate, stream_generate
+from app.rag.generator import generate, stream_generate, _format_sources
 
 logger = logging.getLogger(__name__)
 
@@ -35,32 +35,13 @@ async def answer_question(
     """
     Pose une question au pipeline RAG et retourne la réponse complète.
 
-    Args:
-        question:             La question posée par l'utilisateur.
-        client_slug:          Identifiant du client (namespace Qdrant).
-        top_k:                Nombre de chunks à récupérer.
-        score_threshold:      Score de similarité minimum pour retenir un chunk.
-        conversation_history: Historique de la conversation (tours précédents).
-
     Returns:
         {
             "answer": str,
-            "sources": [
-                {
-                    "title": str,
-                    "url": str,
-                    "source_type": str,
-                    "score": float,
-                    "excerpt": str,
-                }
-            ],
+            "sources": [{"title", "url", "source_type", "score", "excerpt"}],
             "chunks_used": int,
             "processing_time_ms": int,
         }
-
-    Raises:
-        Exception : toute erreur de retrieval ou de génération est propagée
-                    vers la route API qui s'occupe du logging et du code HTTP.
     """
     start = time.perf_counter()
 
@@ -69,7 +50,6 @@ async def answer_question(
         f"(client={client_slug}, top_k={top_k})"
     )
 
-    # ---- Étape 1 : Retrieval ----
     chunks: list[RetrievedChunk] = await retrieve(
         question=question,
         client_slug=client_slug,
@@ -79,7 +59,6 @@ async def answer_question(
 
     logger.info(f"[CHAIN] {len(chunks)} chunks récupérés")
 
-    # ---- Étape 2 : Generation ----
     result = await generate(
         question=question,
         chunks=chunks,
@@ -110,22 +89,20 @@ async def stream_answer(
     top_k: int = 5,
     score_threshold: float = 0.45,
     conversation_history: list[dict] | None = None,
-) -> AsyncGenerator[str, None]:
+) -> AsyncGenerator[str | list, None]:
     """
     Pose une question au pipeline RAG et stream la réponse token par token.
 
-    Le premier événement SSE envoyé par chat.py contient les métadonnées
-    (sources, chunks_used) ; les suivants contiennent les tokens de réponse.
-
     Yields:
-        Tokens de texte de la réponse.
+        - En premier : la liste des chunks récupérés (list[RetrievedChunk]),
+          pour que chat.py puisse les inclure dans l'événement SSE "done".
+        - Ensuite : les tokens de texte (str) de la réponse LLM.
     """
     logger.info(
         f"[CHAIN] Streaming question : '{question[:80]}' "
         f"(client={client_slug})"
     )
 
-    # ---- Étape 1 : Retrieval (même logique que la version non-streaming) ----
     chunks: list[RetrievedChunk] = await retrieve(
         question=question,
         client_slug=client_slug,
@@ -135,7 +112,10 @@ async def stream_answer(
 
     logger.info(f"[CHAIN] {len(chunks)} chunks récupérés (streaming)")
 
-    # ---- Étape 2 : Génération en streaming ----
+    # Premier yield : les chunks pour que chat.py puisse les sérialiser
+    yield chunks
+
+    # Puis les tokens de réponse
     async for token in stream_generate(
         question=question,
         chunks=chunks,
@@ -146,7 +126,6 @@ async def stream_answer(
 
 # ---------------------------------------------------------------------------
 # Utilitaire : métadonnées des sources sans générer de réponse
-# (utile pour les tests et le debug)
 # ---------------------------------------------------------------------------
 
 async def retrieve_only(

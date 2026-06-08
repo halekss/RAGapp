@@ -1,196 +1,267 @@
-import { useState, useRef, useCallback } from "react";
+/**
+ * useChat — hook principal du chat RAG.
+ *
+ * Routes utilisées :
+ *   POST   /api/v1/chat/          → réponse complète (stream: false)
+ *   POST   /api/v1/chat/stream    → SSE token par token (stream: true)
+ *   GET    /api/v1/chat/history   → historique serveur (pour restauration)
+ *   DELETE /api/v1/chat/history   → effacement côté serveur
+ */
+
+import { useState, useCallback, useRef } from "react";
+import { apiGet, apiPost, apiDelete, apiStream, ApiError, StreamSource } from "../api/client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface Source {
+export interface ChatSource {
   title: string;
   url: string;
-  score: number;
-  published_at?: string;
+  source_type: string;
+  collected_at?: string;
 }
 
-export interface Message {
+export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
-  sources?: Source[];
-  timestamp: Date;
+  sources?: ChatSource[];
   isStreaming?: boolean;
+  error?: string;
+  created_at?: string;
 }
 
-export interface UseChatOptions {
-  stream?: boolean;
+// Payload renvoyé par POST /api/v1/chat/
+interface ChatResponse {
+  answer: string;
+  sources?: ChatSource[];
 }
 
-export interface UseChatReturn {
-  messages: Message[];
-  isLoading: boolean;
-  streamEnabled: boolean;
-  setStreamEnabled: (v: boolean) => void;
-  sendMessage: (content: string) => Promise<void>;
-  clearHistory: () => void;
-  abort: () => void;
+// Payload renvoyé par GET /api/v1/chat/history
+interface HistoryEntry {
+  id: string;
+  question: string;
+  answer: string | null;
+  created_at: string;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function uid(): string {
+  return crypto.randomUUID();
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
-export function useChat(options: UseChatOptions = {}): UseChatReturn {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [streamEnabled, setStreamEnabled] = useState(options.stream ?? true);
-  const abortRef = useRef<AbortController | null>(null);
+interface UseChatOptions {
+  /** Si true (défaut), utilise l'endpoint SSE /stream. */
+  stream?: boolean;
+}
 
-  const abort = useCallback(() => {
-    abortRef.current?.abort();
-    setIsLoading(false);
-    // Marquer le dernier message comme non-streaming s'il était en cours
-    setMessages((prev) =>
-      prev.map((m, i) =>
-        i === prev.length - 1 && m.isStreaming ? { ...m, isStreaming: false } : m
-      )
-    );
+export interface UseChatReturn {
+  messages: ChatMessage[];
+  isLoading: boolean;
+  streamEnabled: boolean;
+  setStreamEnabled: (v: boolean) => void;
+  sendMessage: (text: string) => Promise<void>;
+  clearHistory: () => Promise<void>;
+  loadHistory: () => Promise<void>;
+  abort: () => void;
+  error: string | null;
+}
+
+export function useChat(opts: UseChatOptions = {}): UseChatReturn {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [streamEnabled, setStreamEnabled] = useState(opts.stream ?? true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Ref pour annuler un stream en cours si l'utilisateur envoie un nouveau message
+  const abortRef = useRef<(() => void) | null>(null);
+
+  // ── helpers internes ───────────────────────────────────────────────────────
+
+  const appendMessage = useCallback((msg: ChatMessage) => {
+    setMessages((prev) => [...prev, msg]);
   }, []);
 
-  const clearHistory = useCallback(() => {
-    abort();
-    setMessages([]);
-  }, [abort]);
-
-  const sendMessage = useCallback(
-    async (content: string) => {
-      if (!content.trim() || isLoading) return;
-
-      const userMsg: Message = {
-        id: crypto.randomUUID(),
-        role: "user",
-        content: content.trim(),
-        timestamp: new Date(),
-      };
-
-      setMessages((prev) => [...prev, userMsg]);
-      setIsLoading(true);
-
-      const assistantId = crypto.randomUUID();
-
-      if (streamEnabled) {
-        await sendStreaming(assistantId, content);
-      } else {
-        await sendNormal(assistantId, content);
-      }
-
-      setIsLoading(false);
+  const updateLastAssistant = useCallback(
+    (updater: (prev: ChatMessage) => ChatMessage) => {
+      setMessages((prev) => {
+        const idx = [...prev].reverse().findIndex((m) => m.role === "assistant");
+        if (idx === -1) return prev;
+        const realIdx = prev.length - 1 - idx;
+        const updated = [...prev];
+        updated[realIdx] = updater(updated[realIdx]);
+        return updated;
+      });
     },
-    [isLoading, streamEnabled] // eslint-disable-line react-hooks/exhaustive-deps
+    []
   );
 
-  // ── Mode streaming (SSE) ───────────────────────────────────────────────────
+  // ── sendMessage ───────────────────────────────────────────────────────────
 
-  async function sendStreaming(assistantId: string, content: string) {
-    const placeholder: Message = {
-      id: assistantId,
-      role: "assistant",
-      content: "",
-      timestamp: new Date(),
-      isStreaming: true,
-    };
-    setMessages((prev) => [...prev, placeholder]);
+  const sendMessage = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed || isLoading) return;
 
-    abortRef.current = new AbortController();
-
-    try {
-      const res = await fetch("/api/chat/stream", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: content }),
-        signal: abortRef.current.signal,
-      });
-
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error("Pas de body dans la réponse SSE");
-
-      const decoder = new TextDecoder();
-      let accumulated = "";
-      let sources: Source[] = [];
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value, { stream: true });
-
-        for (const line of chunk.split("\n")) {
-          if (!line.startsWith("data: ")) continue;
-          const raw = line.slice(6).trim();
-          if (raw === "[DONE]") continue;
-          try {
-            const parsed = JSON.parse(raw);
-            if (parsed.token) accumulated += parsed.token;
-            if (parsed.sources) sources = parsed.sources;
-          } catch {
-            // Token non-JSON, on l'ajoute brut
-            accumulated += raw;
-          }
-        }
-
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId
-              ? { ...m, content: accumulated, sources, isStreaming: true }
-              : m
-          )
-        );
+      // Annuler un éventuel stream précédent
+      if (abortRef.current) {
+        abortRef.current();
+        abortRef.current = null;
       }
 
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId ? { ...m, isStreaming: false, sources } : m
-        )
-      );
-    } catch (err: unknown) {
-      if ((err as Error).name === "AbortError") return;
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId
-            ? { ...m, content: "Une erreur est survenue lors de la génération.", isStreaming: false }
-            : m
-        )
-      );
+      setError(null);
+      setIsLoading(true);
+
+      // Message utilisateur
+      const userMsg: ChatMessage = { id: uid(), role: "user", content: trimmed };
+      appendMessage(userMsg);
+
+      if (streamEnabled) {
+        // ── mode SSE ────────────────────────────────────────────────────────
+
+        const assistantId = uid();
+        const placeholder: ChatMessage = {
+          id: assistantId,
+          role: "assistant",
+          content: "",
+          isStreaming: true,
+        };
+        appendMessage(placeholder);
+
+        abortRef.current = apiStream(
+          "/chat/stream",
+          { question: trimmed },
+          // onToken
+          (token) => {
+            updateLastAssistant((prev) => ({
+              ...prev,
+              content: prev.content + token,
+            }));
+          },
+          // onDone — reçoit les sources structurées depuis l'événement SSE "done"
+          (sources: StreamSource[]) => {
+            console.log("onDone sources:", sources);
+            updateLastAssistant((prev) => ({
+              ...prev,
+              isStreaming: false,
+              sources: sources.map((s) => ({
+                title: s.title,
+                url: s.url,
+                source_type: s.source_type,
+              })),
+            }));
+            setIsLoading(false);
+            abortRef.current = null;
+          },
+          // onError
+          (err) => {
+            updateLastAssistant((prev) => ({
+              ...prev,
+              isStreaming: false,
+              error: err instanceof ApiError ? err.detail : err.message,
+            }));
+            setError(err instanceof ApiError ? err.detail : err.message);
+            setIsLoading(false);
+            abortRef.current = null;
+          }
+        );
+      } else {
+        // ── mode réponse complète ────────────────────────────────────────────
+
+        try {
+          const data = await apiPost<ChatResponse>("/chat/", {
+            question: trimmed,
+          });
+
+          const assistantMsg: ChatMessage = {
+            id: uid(),
+            role: "assistant",
+            content: data.answer,
+            sources: data.sources ?? [],
+          };
+          appendMessage(assistantMsg);
+        } catch (err) {
+          const msg =
+            err instanceof ApiError ? err.detail : (err as Error).message;
+          const errorMsg: ChatMessage = {
+            id: uid(),
+            role: "assistant",
+            content: "",
+            error: msg,
+          };
+          appendMessage(errorMsg);
+          setError(msg);
+        } finally {
+          setIsLoading(false);
+        }
+      }
+    },
+    [isLoading, streamEnabled, appendMessage, updateLastAssistant]
+  );
+
+  // ── clearHistory ──────────────────────────────────────────────────────────
+
+  const clearHistory = useCallback(async () => {
+    if (abortRef.current) {
+      abortRef.current();
+      abortRef.current = null;
     }
-  }
-
-  // ── Mode normal (JSON) ─────────────────────────────────────────────────────
-
-  async function sendNormal(assistantId: string, content: string) {
+    setMessages([]);
+    setIsLoading(false);
+    setError(null);
     try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: content }),
-      });
-
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-      const data = await res.json();
-      const msg: Message = {
-        id: assistantId,
-        role: "assistant",
-        content: data.answer || data.detail || "Pas de réponse.",
-        sources: data.sources ?? [],
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, msg]);
+      await apiDelete("/chat/history");
     } catch {
-      const errMsg: Message = {
-        id: assistantId,
-        role: "assistant",
-        content: "Impossible de contacter le serveur.",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, errMsg]);
+      // L'effacement local a déjà eu lieu ; l'erreur réseau n'est pas bloquante.
     }
-  }
+  }, []);
 
-  return { messages, isLoading, streamEnabled, setStreamEnabled, sendMessage, clearHistory, abort };
+  // ── loadHistory ───────────────────────────────────────────────────────────
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const entries = await apiGet<HistoryEntry[]>("/chat/history");
+      const restored: ChatMessage[] = entries.flatMap((e) => {
+        const user: ChatMessage = {
+          id: `${e.id}-q`,
+          role: "user",
+          content: e.question,
+          created_at: e.created_at,
+        };
+        if (!e.answer) return [user];
+        const assistant: ChatMessage = {
+          id: `${e.id}-a`,
+          role: "assistant",
+          content: e.answer,
+          created_at: e.created_at,
+        };
+        return [user, assistant];
+      });
+      setMessages(restored);
+    } catch {
+      // Silencieux : l'UI reste vide si l'historique est inaccessible.
+    }
+  }, []);
+
+  const abort = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current();
+      abortRef.current = null;
+    }
+    setIsLoading(false);
+  }, []);
+
+  return {
+    messages,
+    isLoading,
+    streamEnabled,
+    setStreamEnabled,
+    sendMessage,
+    clearHistory,
+    loadHistory,
+    abort,
+    error,
+  };
 }

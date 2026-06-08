@@ -99,3 +99,6 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Retourne une instance singleton des settings (mis en cache)."""
     return Settings()
+
+# Instance singleton exposée directement pour les imports
+settings = get_settings()

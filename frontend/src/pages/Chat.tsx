@@ -1,169 +1,176 @@
-import { useRef, useEffect, useState, KeyboardEvent } from "react";
-import { useChat } from "../hooks/useChat";
+/**
+ * Chat.tsx — page principale du chat RAG.
+ *
+ * Classes CSS : BEM custom depuis global.css (chat-*)
+ * Pas de classes Tailwind utilitaires.
+ */
 
-// ─── Suggestions par défaut ──────────────────────────────────────────────────
+import { useEffect, useRef } from "react";
+import { useChat, ChatMessage } from "../hooks/useChat";
 
-const DEFAULT_SUGGESTIONS = [
-  "Quelles sont les dernières actualités concurrentielles ?",
-  "Résume les tendances du marché cette semaine",
-  "Quels sont les mouvements récents de nos concurrents ?",
-  "Analyse les signaux faibles du secteur",
-];
+// ─── Sous-composants ──────────────────────────────────────────────────────────
 
-// ─── Composant ────────────────────────────────────────────────────────────────
+function SourceBadge({ url, title }: { url: string; title: string }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="chat-source-badge"
+      title={url}
+    >
+      {title || url}
+    </a>
+  );
+}
+
+function MessageBubble({ msg }: { msg: ChatMessage }) {
+  const isUser = msg.role === "user";
+
+  return (
+    <div className={`chat-message chat-message--${isUser ? "user" : "assistant"}`}>
+      <div className="chat-message__bubble">
+        {msg.error ? (
+          <span className="chat-message__error">{msg.error}</span>
+        ) : (
+          <>
+            <span className="chat-message__content">
+              {msg.content}
+              {msg.isStreaming && <span className="chat-message__cursor" aria-hidden />}
+            </span>
+            {msg.sources && msg.sources.length > 0 && (
+              <div className="chat-message__sources">
+                <span className="chat-message__sources-label">Sources :</span>
+                {msg.sources.map((s, i) => (
+                  <SourceBadge key={i} url={s.url} title={s.title} />
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="chat-empty">
+      <p className="chat-empty__title">Posez votre première question</p>
+      <p className="chat-empty__subtitle">
+        Les réponses sont générées à partir des sources ingérées.
+      </p>
+    </div>
+  );
+}
+
+// ─── Page principale ──────────────────────────────────────────────────────────
 
 export default function Chat() {
-  const { messages, isLoading, streamEnabled, setStreamEnabled, sendMessage, abort } =
-    useChat({ stream: true });
+  const {
+    messages,
+    isLoading,
+    streamEnabled,
+    setStreamEnabled,
+    sendMessage,
+    clearHistory,
+    loadHistory,
+    error,
+  } = useChat({ stream: true });
 
-  const [input, setInput] = useState("");
+  // Restaurer l'historique serveur au montage
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory]);
+
+  // Scroll automatique vers le bas à chaque nouveau message
   const bottomRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  // Auto-scroll au dernier message
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Auto-resize du textarea
-  useEffect(() => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.style.height = "auto";
-    ta.style.height = `${Math.min(ta.scrollHeight, 180)}px`;
-  }, [input]);
+  // ── Gestion du formulaire ──────────────────────────────────────────────────
 
-  const handleSend = async () => {
-    const text = input.trim();
-    if (!text || isLoading) return;
-    setInput("");
-    await sendMessage(text);
-  };
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const val = inputRef.current?.value ?? "";
+    if (!val.trim() || isLoading) return;
+    sendMessage(val);
+    if (inputRef.current) inputRef.current.value = "";
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    // Entrée seule = envoi ; Shift+Entrée = saut de ligne
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      handleSubmit(e as unknown as React.FormEvent);
     }
-  };
-
-  const handleSuggestion = (text: string) => {
-    setInput(text);
-    textareaRef.current?.focus();
-  };
+  }
 
   return (
-    <div className="chat-page">
+    <div className="chat">
+      {/* ── Barre d'outils ──────────────────────────────────────────────── */}
+      <div className="chat-toolbar">
+        <span className="chat-toolbar__title">Chat</span>
 
-      {/* ── Header ────────────────────────────────────────────────────── */}
-      <header className="chat-header">
-        <div className="chat-header__brand">
-          <span className="chat-header__logo">◈</span>
-          <span className="chat-header__title">Veille RAG</span>
-        </div>
-        <label className="stream-toggle" title="Activer/désactiver le streaming">
+        <label className="chat-toolbar__toggle">
           <input
             type="checkbox"
             checked={streamEnabled}
             onChange={(e) => setStreamEnabled(e.target.checked)}
           />
-          <span className="stream-toggle__label">Streaming</span>
+          <span>Streaming</span>
         </label>
-      </header>
 
-      {/* ── Zone de messages ──────────────────────────────────────────── */}
-      <main className="chat-messages">
+        <button
+          className="chat-toolbar__clear"
+          onClick={clearHistory}
+          disabled={messages.length === 0}
+          title="Effacer l'historique"
+        >
+          Effacer
+        </button>
+      </div>
+
+      {/* ── Zone de messages ────────────────────────────────────────────── */}
+      <div className="chat-messages" role="log" aria-live="polite">
         {messages.length === 0 ? (
-          <div className="chat-empty">
-            <p className="chat-empty__title">Que souhaitez-vous analyser ?</p>
-            <div className="chat-suggestions">
-              {DEFAULT_SUGGESTIONS.map((s) => (
-                <button
-                  key={s}
-                  className="chat-suggestion"
-                  onClick={() => handleSuggestion(s)}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
+          <EmptyState />
         ) : (
-          messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`chat-bubble chat-bubble--${msg.role}`}
-            >
-              <div className="chat-bubble__content">
-                {msg.content}
-                {msg.isStreaming && <span className="chat-cursor" />}
-              </div>
-
-              {/* Sources citées */}
-              {msg.sources && msg.sources.length > 0 && !msg.isStreaming && (
-                <div className="chat-sources">
-                  <p className="chat-sources__label">Sources</p>
-                  <div className="chat-sources__list">
-                    {msg.sources.map((src, i) => (
-                      <a
-                        key={i}
-                        href={src.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="chat-source-chip"
-                      >
-                        <span className="chat-source-chip__score">
-                          {Math.round(src.score * 100)}%
-                        </span>
-                        <span className="chat-source-chip__title">{src.title}</span>
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <time className="chat-bubble__time">
-                {new Date(msg.timestamp).toLocaleTimeString("fr-FR", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </time>
-            </div>
-          ))
+          messages.map((msg) => <MessageBubble key={msg.id} msg={msg} />)
         )}
         <div ref={bottomRef} />
-      </main>
+      </div>
 
-      {/* ── Barre de saisie ────────────────────────────────────────────── */}
-      <footer className="chat-footer">
-        <div className="chat-input-row">
-          <textarea
-            ref={textareaRef}
-            className="chat-input"
-            placeholder="Posez votre question…"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={isLoading}
-            rows={1}
-          />
+      {/* ── Erreur globale (non attachée à un message) ───────────────────── */}
+      {error && <p className="chat-error">{error}</p>}
 
+      {/* ── Formulaire d'envoi ───────────────────────────────────────────── */}
+      <form className="chat-form" onSubmit={handleSubmit}>
+        <textarea
+          ref={inputRef}
+          className="chat-form__input"
+          placeholder="Posez votre question… (Entrée pour envoyer)"
+          rows={2}
+          disabled={isLoading}
+          onKeyDown={handleKeyDown}
+          aria-label="Question"
+        />
+        <button
+          type="submit"
+          className="chat-form__submit"
+          disabled={isLoading}
+          aria-label="Envoyer"
+        >
           {isLoading ? (
-            <button className="chat-btn chat-btn--abort" onClick={abort}>
-              ■ Stop
-            </button>
+            <span className="chat-form__spinner" aria-hidden />
           ) : (
-            <button
-              className="chat-btn chat-btn--send"
-              onClick={handleSend}
-              disabled={!input.trim()}
-            >
-              ↑ Envoyer
-            </button>
+            "Envoyer"
           )}
-        </div>
-        <p className="chat-footer__hint">Entrée pour envoyer · Shift+Entrée pour sauter une ligne</p>
-      </footer>
+        </button>
+      </form>
     </div>
   );
 }

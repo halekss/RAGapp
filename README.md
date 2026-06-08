@@ -22,7 +22,7 @@ Assistant de veille concurrentielle par RAG — multi-tenant, configurable par f
 ## Prérequis
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-- Python 3.11
+- Python 3.11 (uniquement pour travailler sur le code backend hors Docker)
 - LM Studio avec les modèles suivants installés et le serveur démarré sur le port `1234` :
 
 | Rôle | Modèle |
@@ -34,61 +34,53 @@ Le **Just-in-Time Model Loading** doit être activé dans LM Studio (onglet Deve
 
 ---
 
-## Démarrage rapide (Docker)
-
-C'est la méthode recommandée. Docker gère l'intégralité des dépendances : aucun `npm install` ni `pip install` à faire manuellement.
+## Démarrage rapide
 
 ```bash
 # 1. Cloner le dépôt
 git clone <url-du-repo>
-cd RAGapp
+cd competitive-rag
 
-# 2. Vérifier que le .env est bien présent à la racine
-#    (il est commité, aucune action nécessaire)
+# 2. Copier et remplir le fichier d'environnement
+cp .env.example .env
+# Éditer .env : générer SECRET_KEY et API_KEY_SALT, renseigner les mots de passe
 
-# 3. Lancer l'environnement de développement
-docker compose -f docker-compose.dev.yml up --build
+# 3. Lancer tous les services
+docker compose up --build
 ```
 
 Une fois les conteneurs démarrés :
 
 | Service | URL |
 |---|---|
-| API | http://localhost:8000 |
-| Documentation Swagger | http://localhost:8000/docs |
 | Frontend | http://localhost:3000 |
-| Flower (monitoring Celery) | http://localhost:5555 |
+| API Swagger (dev uniquement) | http://localhost:8000/docs |
+| Qdrant dashboard | http://localhost:6333/dashboard |
+| Flower (dev uniquement) | http://localhost:5555 |
+
+> En production (`APP_ENV=production`), la Swagger UI et Redoc sont désactivées. Le frontend communique avec l'API via nginx sans exposer le port 8000.
 
 ---
 
 ## Environnement de développement backend (hors Docker)
 
-Cette section est utile uniquement si tu souhaites travailler sur le code backend avec l'autocomplétion et la vérification de types dans ton IDE.
-
-Prérequis : Python 3.11 installé sur la machine.
+Utile uniquement pour l'autocomplétion et la vérification de types dans l'IDE.
 
 ```bash
-# 1. Se placer dans le dossier backend
 cd backend
 
-# 2. Créer le venv
+# Créer et activer le venv
 py -3.11 -m venv .venv          # Windows
 python3.11 -m venv .venv        # macOS / Linux
 
-# 3. Activer le venv
 source .venv/Scripts/activate   # Windows (Git Bash)
 source .venv/bin/activate       # macOS / Linux
 
-# 4. Mettre pip à jour
 pip install --upgrade pip
-
-# 5. Installer les dépendances
 pip install -e ".[dev]"
 ```
 
-Le flag `-e` installe le projet en mode editable : les modifications du code sont prises en compte sans réinstaller. Le `[dev]` inclut les outils de développement (pytest, ruff, mypy).
-
-Dans VS Code, sélectionner ensuite l'interpréteur qui pointe vers `backend/.venv` via `Ctrl+Shift+P` → **Python: Select Interpreter**.
+Dans VS Code : `Ctrl+Shift+P` → **Python: Select Interpreter** → sélectionner `backend/.venv`.
 
 ---
 
@@ -121,37 +113,75 @@ Puis `docker compose up --build`.
 
 ```
 competitive-rag/
-├── .env                        # Variables d'environnement (commité)
+├── .env                        # Variables d'environnement (ne pas commiter)
+├── .env.example                # Template à copier
+├── .gitignore
 ├── docker-compose.yml          # Production
 ├── docker-compose.dev.yml      # Développement (hot-reload + Flower)
+├── start.sh                    # Script de démarrage avec vérifications
 ├── PROJECT_CONTEXT.md          # Contexte complet du projet pour IA
 │
 ├── backend/
-│   ├── app/
-│   │   ├── main.py             # Point d'entrée FastAPI
-│   │   ├── api/routes/         # Endpoints (chat, sources, ingestion, clients)
-│   │   ├── core/               # Config, database, logging, sécurité
-│   │   ├── ingestion/          # Collecteurs RSS, scraping, PDF + pipeline
-│   │   ├── rag/                # Retriever, generator, chain
-│   │   ├── models/             # SQLAlchemy : Client, Source, QueryLog
-│   │   └── services/           # LLM factory, Celery, Qdrant
+│   ├── Dockerfile
+│   ├── entrypoint.sh           # Attente PostgreSQL + migrations Alembic
+│   ├── pyproject.toml
+│   ├── alembic.ini
+│   ├── alembic/versions/       # Migrations base de données
 │   ├── configs/                # Un dossier YAML par client
-│   ├── alembic/                # Migrations base de données
-│   └── pyproject.toml
+│   └── app/
+│       ├── main.py             # Point d'entrée FastAPI + lifespan
+│       ├── api/
+│       │   ├── deps.py         # Auth API Key, CurrentClient, AdminClient
+│       │   └── routes/         # chat.py, sources.py, ingestion.py, clients.py
+│       ├── core/               # Config, database, logging, sécurité
+│       ├── ingestion/          # Collecteurs RSS/scraping/PDF + pipeline
+│       ├── rag/                # retriever.py, generator.py, chain.py
+│       ├── models/             # SQLAlchemy : Client, Source, QueryLog
+│       └── services/           # LLM factory, tâches Celery, scheduler
 │
 └── frontend/
+    ├── Dockerfile
+    ├── nginx.conf              # Proxy /api, gzip, cache, SPA fallback
+    ├── package.json
+    ├── vite.config.ts
     └── src/
-        ├── pages/              # Chat, Dashboard, Admin
+        ├── pages/              # Chat.tsx, Dashboard.tsx, Admin.tsx
+        ├── hooks/              # useChat.ts, useSources.ts, useDashboard.ts
         ├── components/         # chat/, dashboard/, admin/
-        ├── api/                # Clients HTTP typés
-        └── hooks/              # React Query hooks
+        └── tests/              # Vitest + MSW (31 tests)
+```
+
+---
+
+## Commandes utiles
+
+```bash
+# Démarrer (rebuild si fichiers modifiés)
+docker compose up --build
+
+# Démarrer sans rebuild (relance simple)
+docker compose up
+
+# Arrêter sans supprimer les volumes
+docker compose down
+
+# Arrêter et supprimer tous les volumes (reset BDD)
+docker compose down -v
+
+# Logs d'un service spécifique
+docker compose logs -f api
+docker compose logs -f worker
+
+# Lancer les tests frontend
+cd frontend && npm test
 ```
 
 ---
 
 ## Notes importantes
 
-- `docker compose up --build` est nécessaire uniquement quand on modifie des fichiers Python, le frontend, ou la configuration Docker. Pour les simples relances, `docker compose up` suffit.
+- `docker compose up --build` est nécessaire uniquement quand on modifie des fichiers Python, le frontend, ou la configuration Docker.
 - Modifier un YAML de configuration client ne nécessite pas de rebuild.
 - Le modèle d'embedding doit rester cohérent sur toute la durée de vie du projet. Changer de modèle implique de ré-indexer tous les documents dans Qdrant.
-- `SECRET_KEY` et `API_KEY_SALT` sont à définir une fois en production et ne plus jamais changer.
+- `SECRET_KEY` et `API_KEY_SALT` sont à définir une fois et ne plus jamais changer. Modifier `API_KEY_SALT` invalide toutes les clés API existantes.
+- Ne jamais utiliser LangChain dans ce projet. La bibliothèque RAG est exclusivement LlamaIndex.

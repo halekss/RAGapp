@@ -13,6 +13,7 @@ from app.api.deps import CurrentClient, AdminClient
 from app.core.database import get_db as get_session
 from app.models.source import Source
 from app.services.scheduler import celery_app
+import uuid
 from app.services.tasks import ingest_client, ingest_source
 
 router = APIRouter()
@@ -31,7 +32,7 @@ class IngestionTriggerOut(BaseModel):
 class SourceIngestionTriggerOut(BaseModel):
     task_id: str
     message: str
-    source_id: int
+    source_id: uuid.UUID
     source_name: str
 
 
@@ -99,7 +100,7 @@ async def trigger_full_ingestion(
     summary="Déclencher l'ingestion d'une source spécifique",
 )
 async def trigger_source_ingestion(
-    source_id: int,
+    source_id: uuid.UUID,
     current_client: CurrentClient,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -123,7 +124,7 @@ async def trigger_source_ingestion(
             detail="Cette source est désactivée. Activez-la avant de lancer une ingestion.",
         )
 
-    task = ingest_source.delay(current_client.slug, source_id)
+    task = ingest_source.delay(current_client.slug, source.url)
 
     return {
         "task_id": task.id,

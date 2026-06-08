@@ -1,0 +1,7 @@
+/* Styles globaux BEM des pages Chat, Admin et Dashboard */
+@import './global.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
