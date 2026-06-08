@@ -19,6 +19,7 @@ from app.api.deps import CurrentClient
 from app.core.database import get_db as get_session
 from app.models.query_log import QueryLog
 from app.rag.chain import answer_question, stream_answer
+from app.rag.generator import _format_sources
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -129,17 +130,26 @@ async def chat_stream(
     async def event_generator() -> AsyncGenerator[str, None]:
         start_time = time.monotonic()
         full_answer = ""
+        chunks = []
 
         try:
-            async for token in stream_answer(
+            stream = stream_answer(
                 question=payload.question,
                 client_slug=current_client.slug,
                 top_k=payload.top_k,
                 score_threshold=payload.score_threshold,
                 conversation_history=payload.conversation_history or [],
-            ):
-                full_answer += token
-                yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+            )
+
+            async for item in stream:
+                # Premier yield de stream_answer : la liste des chunks
+                if isinstance(item, list):
+                    chunks = item
+                    continue
+
+                # Tous les yields suivants : tokens de texte
+                full_answer += item
+                yield f"data: {json.dumps({'type': 'token', 'content': item})}\n\n"
 
         except Exception as exc:
             logger.error(f"[CHAT_STREAM] Erreur pour '{current_client.slug}' : {exc}", exc_info=True)
@@ -159,7 +169,8 @@ async def chat_stream(
         await session.commit()
         await session.refresh(log_entry)
 
-        yield f"data: {json.dumps({'type': 'done', 'query_log_id': str(log_entry.id), 'processing_time_ms': processing_time_ms})}\n\n"
+        # Événement final : métadonnées + sources structurées
+        yield f"data: {json.dumps({'type': 'done', 'query_log_id': str(log_entry.id), 'processing_time_ms': processing_time_ms, 'sources': _format_sources(chunks)})}\n\n"
 
     return StreamingResponse(
         event_generator(),

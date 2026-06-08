@@ -21,13 +21,12 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = """Tu es un assistant expert en veille concurrentielle.
 Tu réponds uniquement à partir des extraits de documents fournis ci-dessous.
 Si la réponse ne peut pas être déterminée à partir de ces extraits, dis-le clairement.
-Ne fabrique pas d'informations. Cite toujours tes sources à la fin de ta réponse.
+Ne fabrique pas d'informations.
 
 Règles de formatage :
 - Réponds en français sauf si la question est dans une autre langue.
 - Sois précis et synthétique.
-- À la fin de ta réponse, liste les sources utilisées sous la forme :
-  [Sources] Titre (URL)"""
+- Ne liste PAS les sources à la fin de ta réponse. Les sources sont gérées automatiquement par l'interface."""
 
 MAX_CONTEXT_CHARS = 12_000
 
@@ -116,10 +115,6 @@ def _build_prompt(
     chunks: list[RetrievedChunk],
     conversation_history: list[dict] | None,
 ) -> str:
-    """
-    Construit un prompt texte complet.
-    LlamaIndex accepte une simple chaîne via llm.complete() / llm.stream_complete().
-    """
     context_block = _build_context_block(chunks)
 
     history_block = ""
@@ -146,7 +141,6 @@ def _build_prompt(
 
 
 def _build_context_block(chunks: list[RetrievedChunk]) -> str:
-    """Formate les chunks en bloc de contexte lisible par le LLM."""
     parts: list[str] = []
     total_chars = 0
 
@@ -179,32 +173,24 @@ def _build_context_block(chunks: list[RetrievedChunk]) -> str:
 # ---------------------------------------------------------------------------
 
 async def _call_llm(llm, prompt: str) -> str:
-    """Appelle le LLM LlamaIndex et retourne la réponse complète."""
     import asyncio
-
-    # LlamaIndex expose acomplete() (async) et complete() (sync)
     try:
         response = await llm.acomplete(prompt)
         return str(response)
     except (AttributeError, NotImplementedError):
-        # Fallback sync dans un thread
         loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(None, llm.complete, prompt)
         return str(response)
 
 
 async def _stream_llm(llm, prompt: str) -> AsyncGenerator[str, None]:
-    """Appelle le LLM LlamaIndex en streaming."""
     import asyncio
-
     try:
-        # astream_complete : async natif LlamaIndex
         async for chunk in await llm.astream_complete(prompt):
             delta = chunk.delta
             if delta:
                 yield delta
     except (AttributeError, NotImplementedError):
-        # Fallback : stream_complete synchrone dans un thread
         loop = asyncio.get_running_loop()
 
         def _collect():
