@@ -178,6 +178,30 @@ cd frontend && npm test
 
 ---
 
+## Dépannage
+
+### `env: 'bash\r': No such file or directory` au démarrage de `api`, `worker` ou `beat`
+
+Cause : `entrypoint.sh` a été sauvegardé avec des fins de ligne Windows (CRLF) au lieu de Unix (LF), ce qui casse le shebang `#!/usr/bin/env bash`.
+
+Correction :
+
+```bash
+sed -i 's/\r$//' backend/entrypoint.sh
+docker compose build --no-cache api worker beat
+docker compose up -d
+```
+
+Prévention : un fichier `.gitattributes` à la racine force les `.sh` à rester en LF, même sous Windows :
+
+```
+*.sh text eol=lf
+```
+
+Vérifier aussi que `git config core.autocrlf` est sur `input` et non `true`.
+
+---
+
 ## Notes importantes
 
 - `docker compose up --build` est nécessaire uniquement quand on modifie des fichiers Python, le frontend, ou la configuration Docker.
