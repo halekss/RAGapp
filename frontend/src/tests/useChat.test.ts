@@ -41,7 +41,7 @@ describe("useChat", () => {
 
   it("isLoading passe à true pendant l'envoi puis revient à false", async () => {
     server.use(
-      http.post("/api/chat", async () => {
+      http.post("/api/v1/chat/", async () => {
         await new Promise((r) => setTimeout(r, 20));
         return HttpResponse.json({ answer: "OK", sources: [] });
       })
@@ -69,7 +69,7 @@ describe("useChat", () => {
 
   it("n'envoie pas si isLoading est déjà true", async () => {
     server.use(
-      http.post("/api/chat", async () => {
+      http.post("/api/v1/chat/", async () => {
         await new Promise((r) => setTimeout(r, 50));
         return HttpResponse.json({ answer: "OK", sources: [] });
       })
@@ -88,7 +88,9 @@ describe("useChat", () => {
 
   it("affiche un message d'erreur si l'API répond en erreur", async () => {
     server.use(
-      http.post("/api/chat", () => HttpResponse.json({}, { status: 500 }))
+      http.post("/api/v1/chat/", () =>
+        HttpResponse.json({ detail: "Erreur serveur interne" }, { status: 500 })
+      )
     );
 
     const { result } = renderHook(() => useChat({ stream: false }));
@@ -99,7 +101,7 @@ describe("useChat", () => {
 
     const last = result.current.messages.at(-1)!;
     expect(last.role).toBe("assistant");
-    expect(last.content).toMatch(/erreur|serveur/i);
+    expect(last.error).toMatch(/erreur|serveur/i);
   });
 
   // ── Mode streaming (SSE) ───────────────────────────────────────────────────
@@ -109,10 +111,9 @@ describe("useChat", () => {
     // On mocke fetch directement pour retourner un Response avec un
     // ReadableStream contrôlé, comme le ferait un vrai navigateur.
     const lines = [
-      `data: ${JSON.stringify({ token: "Bonjour" })}\n`,
-      `data: ${JSON.stringify({ token: " monde" })}\n`,
-      `data: ${JSON.stringify({ sources: [{ title: "Src", url: "https://x.com", score: 0.9 }] })}\n`,
-      "data: [DONE]\n",
+      `data: ${JSON.stringify({ type: "token", content: "Bonjour" })}\n\n`,
+      `data: ${JSON.stringify({ type: "token", content: " monde" })}\n\n`,
+      `data: ${JSON.stringify({ type: "done", sources: [{ title: "Src", url: "https://x.com", source_type: "rss" }] })}\n\n`,
     ].join("");
 
     const stream = new ReadableStream<Uint8Array>({
@@ -148,7 +149,7 @@ describe("useChat", () => {
 
   it("abort stoppe le chargement et marque le message comme non-streaming", async () => {
     server.use(
-      http.post("/api/chat/stream", async ({ request }) => {
+      http.post("/api/v1/chat/stream", async ({ request }) => {
         await new Promise<void>((_, reject) => {
           request.signal.addEventListener("abort", () => reject(new DOMException("aborted")));
         });

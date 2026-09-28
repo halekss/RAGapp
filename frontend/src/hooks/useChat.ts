@@ -249,9 +249,11 @@ export function useChat(opts: UseChatOptions = {}): UseChatReturn {
     if (abortRef.current) {
       abortRef.current();
       abortRef.current = null;
+      // apiStream ignore l'AbortError : onDone/onError ne seront pas appelés.
+      updateLastAssistant((prev) => ({ ...prev, isStreaming: false }));
     }
     setIsLoading(false);
-  }, []);
+  }, [updateLastAssistant]);
 
   return {
     messages,
