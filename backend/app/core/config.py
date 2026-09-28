@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     # --- PostgreSQL ---
     database_url: str = Field(
-        default="postgresql+asyncpg://rag:ragpassword@localhost:5432/ragdb"
+        default="postgresql+asyncpg://rag:ragpassword@localhost:5435/ragdb"
     )
 
     # --- Qdrant ---
@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     # Changer de modèle sans recréer les collections Qdrant provoquera une erreur.
 
     # --- Redis / Celery ---
-    redis_url: str = Field(default="redis://localhost:6379/0")
+    redis_url: str = Field(default="redis://localhost:6380/0")
     celery_broker_url: str = Field(default="redis://redis:6379/0")
     celery_result_backend: str = Field(default="redis://redis:6379/1")
 
@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     chunk_overlap: int = Field(default=64)
 
     # --- CORS ---
-    frontend_origin: str = Field(default="http://localhost:3000")
+    frontend_origin: str = Field(default="http://localhost:3002")
 
     # --- Chemins ---
     configs_dir: Path = Field(default=Path("/app/configs"))

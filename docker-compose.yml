@@ -118,7 +118,7 @@ services:
     container_name: rag_frontend
     restart: unless-stopped
     ports:
-      - "3000:80"
+      - "3002:80"
     depends_on:
       api:
         condition: service_healthy

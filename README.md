@@ -53,8 +53,8 @@ Une fois les conteneurs démarrés :
 
 | Service | URL |
 |---|---|
-| Frontend | http://localhost:3000 |
-| API Swagger (dev uniquement) | http://localhost:8000/docs |
+| Frontend | http://localhost:3002 |
+| API Swagger (dev uniquement) | http://localhost:8001/docs |
 | Qdrant dashboard | http://localhost:6333/dashboard |
 | Flower (dev uniquement) | http://localhost:5555 |
 
