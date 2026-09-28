@@ -1,3 +1,4 @@
 .env
 .env.local
 keybrut.md
+node_modules/
